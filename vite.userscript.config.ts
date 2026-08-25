@@ -43,6 +43,7 @@ export default defineConfig({
     'process.env.NODE_ENV': JSON.stringify('production'),
   },
   build: {
+    minify: false,
     emptyOutDir: true,
     outDir: 'dist-userscript',
     lib: {

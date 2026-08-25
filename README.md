@@ -30,4 +30,4 @@ npm run build:userscript
 npm run lint
 ```
 
-构建产物为 `dist-userscript/bangumi-plus.user.js`。
+构建产物为 `dist-userscript/bangumi-plus.user.js`，保留 userscript 元数据并输出可读的多行代码。
