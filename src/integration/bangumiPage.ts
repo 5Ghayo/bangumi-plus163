@@ -60,17 +60,15 @@ export function createBangumiShadowMount(): {
 
 export function createBangumiTrackListShadowMount(): {
   host: HTMLDivElement;
+  launcher: HTMLButtonElement;
   root: HTMLDivElement;
 } | null {
   const mountPoint = findBangumiTrackListMountPoint();
   const trackList = findBangumiTrackListElement();
   if (!mountPoint) return null;
 
-  const activeHost = document.querySelector<HTMLElement>('[data-bangumi-music-player][data-bangumi-plus-version="1.0.0"]');
-  if (activeHost) return null;
-
-  // Remove hosts left behind by older script versions so an update always
-  // renders a fresh visible control.
+  // A previous script version may have left an empty host behind. Remove it
+  // so an updated userscript can always render a fresh visible control.
   document.querySelectorAll<HTMLElement>('[data-bangumi-music-player]').forEach((element) => element.remove());
 
   const host = document.createElement('div');
@@ -83,13 +81,31 @@ export function createBangumiTrackListShadowMount(): {
     'margin:8px 0 12px',
     'clear:both',
   ].join(';');
+  const launcher = document.createElement('button');
+  launcher.type = 'button';
+  launcher.dataset.bangumiPlusLauncher = 'true';
+  launcher.textContent = '试听 网易云音乐';
+  launcher.style.cssText = [
+    'display:inline-flex',
+    'align-items:center',
+    'min-height:32px',
+    'padding:0 12px',
+    'border:1px solid #e28b4d',
+    'border-radius:4px',
+    'background:#fff7ef',
+    'color:#b55d1e',
+    'font:600 13px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
+    'cursor:pointer',
+  ].join(';');
   const root = document.createElement('div');
   root.id = 'root';
+  root.style.display = 'none';
+  host.append(launcher);
   host.append(root);
   if (trackList) trackList.before(host);
   else mountPoint.prepend(host);
 
-  return { host, root };
+  return { host, launcher, root };
 }
 
 export function isMusicSubject(subject: { type?: number }): boolean {
