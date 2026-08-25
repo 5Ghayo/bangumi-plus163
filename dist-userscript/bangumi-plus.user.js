@@ -10656,6 +10656,7 @@
 		const mountPoint = findBangumiTrackListMountPoint();
 		const trackList = findBangumiTrackListElement();
 		if (!mountPoint) return null;
+		if (document.querySelector("[data-bangumi-music-player][data-bangumi-plus-version=\"1.0.0\"]")) return null;
 		document.querySelectorAll("[data-bangumi-music-player]").forEach((element) => element.remove());
 		const host = document.createElement("div");
 		host.dataset.bangumiMusicPlayer = "true";
@@ -10667,32 +10668,13 @@
 			"margin:8px 0 12px",
 			"clear:both"
 		].join(";");
-		const launcher = document.createElement("button");
-		launcher.type = "button";
-		launcher.dataset.bangumiPlusLauncher = "true";
-		launcher.textContent = "试听 网易云音乐";
-		launcher.style.cssText = [
-			"display:inline-flex",
-			"align-items:center",
-			"min-height:32px",
-			"padding:0 12px",
-			"border:1px solid #e28b4d",
-			"border-radius:4px",
-			"background:#fff7ef",
-			"color:#b55d1e",
-			"font:600 13px -apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif",
-			"cursor:pointer"
-		].join(";");
 		const root = document.createElement("div");
 		root.id = "root";
-		root.style.display = "none";
-		host.append(launcher);
 		host.append(root);
 		if (trackList) trackList.before(host);
 		else mountPoint.prepend(host);
 		return {
 			host,
-			launcher,
 			root
 		};
 	}
@@ -11089,6 +11071,7 @@
 	var App_default = ":root {\n  --bangumi-plus-panel-bg: #f5f5f5;\n  --bangumi-plus-panel-border: #ddd;\n  --bangumi-plus-panel-text: #777;\n  --bangumi-plus-panel-muted: #999;\n  --bangumi-plus-panel-hover: #fffaf6;\n  --bangumi-plus-track-bg: #fff;\n  --bangumi-plus-track-border: #d7d7d7;\n  --bangumi-plus-track-active-bg: #fff7ef;\n}\n\n:root[data-bangumi-plus-theme='dark'] {\n  --bangumi-plus-panel-bg: #282828;\n  --bangumi-plus-panel-border: #484848;\n  --bangumi-plus-panel-text: #c4c4c4;\n  --bangumi-plus-panel-muted: #9a9a9a;\n  --bangumi-plus-panel-hover: #382f29;\n  --bangumi-plus-track-bg: #333;\n  --bangumi-plus-track-border: #555;\n  --bangumi-plus-track-active-bg: #3a302a;\n}\n\n.music-preview {\n  margin: 0 0 10px;\n  border: 1px solid var(--bangumi-plus-panel-border);\n  border-radius: 5px;\n  background: var(--bangumi-plus-panel-bg);\n  overflow: hidden;\n}\n\n.music-preview__toolbar {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  min-height: 38px;\n}\n\n.music-preview__toolbar-actions {\n  display: inline-flex;\n  align-items: center;\n}\n\n.music-preview__toggle,\n.music-preview__login,\n.music-preview__close,\n.music-preview__collapse {\n  display: inline-flex;\n  align-items: center;\n  border: 0;\n  background: transparent;\n  color: #c96f31;\n  cursor: pointer;\n}\n\n.music-preview__login {\n  gap: 4px;\n  margin-left: 0;\n  padding: 5px 8px;\n  border: 1px solid var(--bangumi-plus-panel-border);\n  border-radius: 3px;\n  color: var(--bangumi-plus-panel-muted);\n  font-size: 11px;\n}\n\n.music-preview__login:hover {\n  border-color: #e28b4d;\n  background: var(--bangumi-plus-panel-hover);\n  color: #d97732;\n}\n\n.music-preview__login--active {\n  border-color: #73a97d;\n  color: #4f8a5a;\n}\n\n.music-preview__login--active:hover {\n  border-color: #4f8a5a;\n  color: #3c7448;\n}\n\n.music-preview__toggle {\n  gap: 7px;\n  padding: 9px 12px;\n  font-size: 13px;\n  font-weight: 600;\n}\n\n.music-preview__toggle:hover,\n.music-preview__close:hover,\n.music-preview__collapse:hover { color: #a9531c; }\n\n.music-preview__source {\n  color: var(--bangumi-plus-panel-muted);\n  font-size: 11px;\n  font-weight: 400;\n}\n\n.music-preview__close {\n  justify-content: center;\n  width: 34px;\n  height: 34px;\n  margin-right: 2px;\n  color: var(--bangumi-plus-panel-muted);\n}\n\n.music-preview__body {\n  border-top: 1px solid var(--bangumi-plus-panel-border);\n  padding: 0 10px 10px;\n}\n\n.music-preview__status {\n  display: flex;\n  align-items: center;\n  gap: 7px;\n  min-height: 38px;\n  padding: 0 4px;\n  color: var(--bangumi-plus-panel-text);\n  font-size: 12px;\n}\n\n.music-preview__status--error { color: #d9825b; }\n.music-preview__spinner { animation: bangumi-plus-spin 0.9s linear infinite; }\n\n@keyframes bangumi-plus-spin {\n  to { transform: rotate(360deg); }\n}\n";
 	//#endregion
 	//#region src/userscript.tsx
+	var USERSCRIPT_VERSION = "1.0.0";
 	var NETEASE_SEARCH_ENDPOINT = "https://music.163.com/api/search/get/web";
 	var NETEASE_ALBUM_ENDPOINT = "https://music.163.com/api/album";
 	var NETEASE_AUDIO_ENDPOINT = "https://music.163.com/api/song/enhance/player/url/v1";
@@ -11221,7 +11204,10 @@
 	}
 	async function mount() {
 		const subjectId = getSubjectIdFromLocation();
-		if (!subjectId) return;
+		if (!subjectId) {
+			console.info("[bangumi-plus] not a supported subject page", location.href);
+			return;
+		}
 		try {
 			await waitForTrackList();
 			const mount = createBangumiTrackListShadowMount();
@@ -11245,18 +11231,12 @@
 				accountEndpoint: NETEASE_ACCOUNT_ENDPOINT,
 				requestJson
 			}));
-			window.setTimeout(() => {
-				const toolbarButton = mount.root.querySelector(".music-preview__toggle");
-				if (!toolbarButton) return;
-				mount.launcher.addEventListener("click", () => toolbarButton.click());
-				mount.launcher.remove();
-				mount.root.style.display = "block";
-			}, 100);
-			console.info("[bangumi-plus] preview button mounted");
+			console.info("[bangumi-plus] preview button mounted at", location.href);
 		} catch (error) {
 			console.warn("[bangumi-plus] 音乐播放器加载失败", error);
 		}
 	}
+	document.documentElement.dataset.bangumiPlusUserscript = USERSCRIPT_VERSION;
 	console.info("[bangumi-plus] userscript started", location.href);
 	mount();
 	//#endregion

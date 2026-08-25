@@ -6,6 +6,7 @@ import { createBangumiTrackListShadowMount, findBangumiTrackListElement, findBan
 import type { BangumiSubject } from './types/bangumi';
 import type { JsonRequester } from './lib/neteaseResolver';
 
+const USERSCRIPT_VERSION = '1.0.0';
 const NETEASE_SEARCH_ENDPOINT = 'https://music.163.com/api/search/get/web';
 const NETEASE_ALBUM_ENDPOINT = 'https://music.163.com/api/album';
 const NETEASE_AUDIO_ENDPOINT = 'https://music.163.com/api/song/enhance/player/url/v1';
@@ -158,7 +159,10 @@ function waitForTrackList(timeoutMs = 10000): Promise<void> {
 
 async function mount() {
   const subjectId = getSubjectIdFromLocation();
-  if (!subjectId) return;
+  if (!subjectId) {
+    console.info('[bangumi-plus] not a supported subject page', location.href);
+    return;
+  }
 
   try {
     await waitForTrackList();
@@ -188,18 +192,12 @@ async function mount() {
         requestJson={requestJson}
       />,
     );
-    window.setTimeout(() => {
-      const toolbarButton = mount.root.querySelector<HTMLButtonElement>('.music-preview__toggle');
-      if (!toolbarButton) return;
-      mount.launcher.addEventListener('click', () => toolbarButton.click());
-      mount.launcher.remove();
-      mount.root.style.display = 'block';
-    }, 100);
-    console.info('[bangumi-plus] preview button mounted');
+    console.info('[bangumi-plus] preview button mounted at', location.href);
   } catch (error) {
     console.warn('[bangumi-plus] 音乐播放器加载失败', error);
   }
 }
 
+document.documentElement.dataset.bangumiPlusUserscript = USERSCRIPT_VERSION;
 console.info('[bangumi-plus] userscript started', location.href);
 void mount();
