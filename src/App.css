@@ -1,0 +1,126 @@
+:root {
+  --bangumi-plus-panel-bg: #f5f5f5;
+  --bangumi-plus-panel-border: #ddd;
+  --bangumi-plus-panel-text: #777;
+  --bangumi-plus-panel-muted: #999;
+  --bangumi-plus-panel-hover: #fffaf6;
+  --bangumi-plus-track-bg: #fff;
+  --bangumi-plus-track-border: #d7d7d7;
+  --bangumi-plus-track-active-bg: #fff7ef;
+}
+
+:root[data-bangumi-plus-theme='dark'] {
+  --bangumi-plus-panel-bg: #282828;
+  --bangumi-plus-panel-border: #484848;
+  --bangumi-plus-panel-text: #c4c4c4;
+  --bangumi-plus-panel-muted: #9a9a9a;
+  --bangumi-plus-panel-hover: #382f29;
+  --bangumi-plus-track-bg: #333;
+  --bangumi-plus-track-border: #555;
+  --bangumi-plus-track-active-bg: #3a302a;
+}
+
+.music-preview {
+  margin: 0 0 10px;
+  border: 1px solid var(--bangumi-plus-panel-border);
+  border-radius: 5px;
+  background: var(--bangumi-plus-panel-bg);
+  overflow: hidden;
+}
+
+.music-preview__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 38px;
+}
+
+.music-preview__toolbar-actions {
+  display: inline-flex;
+  align-items: center;
+}
+
+.music-preview__toggle,
+.music-preview__login,
+.music-preview__close,
+.music-preview__collapse {
+  display: inline-flex;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  color: #c96f31;
+  cursor: pointer;
+}
+
+.music-preview__login {
+  gap: 4px;
+  margin-left: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--bangumi-plus-panel-border);
+  border-radius: 3px;
+  color: var(--bangumi-plus-panel-muted);
+  font-size: 11px;
+}
+
+.music-preview__login:hover {
+  border-color: #e28b4d;
+  background: var(--bangumi-plus-panel-hover);
+  color: #d97732;
+}
+
+.music-preview__login--active {
+  border-color: #73a97d;
+  color: #4f8a5a;
+}
+
+.music-preview__login--active:hover {
+  border-color: #4f8a5a;
+  color: #3c7448;
+}
+
+.music-preview__toggle {
+  gap: 7px;
+  padding: 9px 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.music-preview__toggle:hover,
+.music-preview__close:hover,
+.music-preview__collapse:hover { color: #a9531c; }
+
+.music-preview__source {
+  color: var(--bangumi-plus-panel-muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.music-preview__close {
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  margin-right: 2px;
+  color: var(--bangumi-plus-panel-muted);
+}
+
+.music-preview__body {
+  border-top: 1px solid var(--bangumi-plus-panel-border);
+  padding: 0 10px 10px;
+}
+
+.music-preview__status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 0 4px;
+  color: var(--bangumi-plus-panel-text);
+  font-size: 12px;
+}
+
+.music-preview__status--error { color: #d9825b; }
+.music-preview__spinner { animation: bangumi-plus-spin 0.9s linear infinite; }
+
+@keyframes bangumi-plus-spin {
+  to { transform: rotate(360deg); }
+}
