@@ -10652,7 +10652,7 @@
 	function getBangumiTrackTitle(row) {
 		return row.querySelector("h6 a")?.textContent?.trim() ?? "";
 	}
-	function createBangumiTrackListShadowMount() {
+	function createBangumiTrackListShadowMount(options) {
 		const mountPoint = findBangumiTrackListMountPoint();
 		const trackList = findBangumiTrackListElement();
 		if (!mountPoint) return null;
@@ -10670,7 +10670,7 @@
 		const launcher = document.createElement("button");
 		launcher.type = "button";
 		launcher.dataset.bangumiPlusLauncher = "true";
-		launcher.textContent = "试听 网易云音乐";
+		launcher.textContent = options?.launcherLabel ?? "试听 网易云音乐";
 		launcher.style.cssText = [
 			"display:inline-flex",
 			"align-items:center",
@@ -10736,7 +10736,7 @@
 			name: normalizeTrackTitle(song.name)
 		})).filter(({ name }) => name.length > 2 && (name.includes(normalizedTitle) || normalizedTitle.includes(name))).sort((a, b) => Math.abs(a.name.length - normalizedTitle.length) - Math.abs(b.name.length - normalizedTitle.length))[0]?.song ?? null;
 	}
-	function MusicPreviewBar({ subject, endpoint, albumEndpoint, audioEndpoint, accountEndpoint, requestJson, mode = "auto" }) {
+	function MusicPreviewBar({ subject, endpoint, albumEndpoint, audioEndpoint, accountEndpoint, requestJson, mode = "auto", sourceLabel = "网易云音乐" }) {
 		const [opened, setOpened] = (0, import_react.useState)(false);
 		const [searchSession, setSearchSession] = (0, import_react.useState)(0);
 		const [player, setPlayer] = (0, import_react.useState)(EMPTY_PLAYER);
@@ -11007,7 +11007,7 @@
 								/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: opened ? "收起试听" : "试听" }),
 								/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
 									className: "music-preview__source",
-									children: "网易云音乐"
+									children: sourceLabel
 								})
 							]
 						}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
@@ -11055,9 +11055,13 @@
 							className: "music-preview__status music-preview__status--error",
 							children: error
 						}),
-						!loading && !error && result && songs.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+						!loading && !error && result && songs.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
 							className: "music-preview__status",
-							children: "没有找到匹配的网易云曲目"
+							children: [
+								"没有找到匹配的",
+								sourceLabel,
+								"曲目"
+							]
 						}),
 						!loading && !error && songs.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
 							className: "music-preview__status",

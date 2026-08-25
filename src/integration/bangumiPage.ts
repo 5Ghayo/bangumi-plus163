@@ -58,7 +58,7 @@ export function createBangumiShadowMount(): {
   return { host, root, shadow };
 }
 
-export function createBangumiTrackListShadowMount(): {
+export function createBangumiTrackListShadowMount(options?: { launcherLabel?: string }): {
   host: HTMLDivElement;
   launcher: HTMLButtonElement;
   root: HTMLDivElement;
@@ -84,7 +84,7 @@ export function createBangumiTrackListShadowMount(): {
   const launcher = document.createElement('button');
   launcher.type = 'button';
   launcher.dataset.bangumiPlusLauncher = 'true';
-  launcher.textContent = '试听 网易云音乐';
+  launcher.textContent = options?.launcherLabel ?? '试听 网易云音乐';
   launcher.style.cssText = [
     'display:inline-flex',
     'align-items:center',

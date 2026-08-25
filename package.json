@@ -5,8 +5,9 @@
   "description": "Bangumi music subject preview userscript powered by NetEase Cloud Music.",
   "type": "module",
   "scripts": {
-    "build": "npm run build:userscript",
+    "build": "npm run build:userscript && npm run build:bgm",
     "build:userscript": "tsc -b && vite build --config vite.userscript.config.ts && prettier --write dist-userscript/bangumi-plus.user.js",
+    "build:bgm": "tsc -b && vite build --config vite.bgm.config.ts && prettier --write dist-bgm/bangumi-plus-bgm.js",
     "lint": "oxlint"
   },
   "dependencies": {

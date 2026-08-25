@@ -17,6 +17,7 @@ interface Props {
   accountEndpoint: string;
   requestJson: JsonRequester;
   mode?: NeteaseResolveMode;
+  sourceLabel?: string;
 }
 
 interface NeteaseAccountResponse {
@@ -78,7 +79,7 @@ function matchSong(title: string, songs: NeteaseSong[]) {
     .sort((a, b) => Math.abs(a.name.length - normalizedTitle.length) - Math.abs(b.name.length - normalizedTitle.length))[0]?.song ?? null;
 }
 
-export default function MusicPreviewBar({ subject, endpoint, albumEndpoint, audioEndpoint, accountEndpoint, requestJson, mode = 'auto' }: Props) {
+export default function MusicPreviewBar({ subject, endpoint, albumEndpoint, audioEndpoint, accountEndpoint, requestJson, mode = 'auto', sourceLabel = '网易云音乐' }: Props) {
   const [opened, setOpened] = useState(false);
   const [searchSession, setSearchSession] = useState(0);
   const [player, setPlayer] = useState<AudioPlayerState>(EMPTY_PLAYER);
@@ -304,7 +305,7 @@ export default function MusicPreviewBar({ subject, endpoint, albumEndpoint, audi
           <button className="music-preview__toggle" type="button" onClick={() => (opened ? close() : open())} aria-expanded={opened}>
             {loading ? <LoaderCircle size={14} className="music-preview__spinner" aria-hidden="true" /> : opened ? <ChevronUp size={14} aria-hidden="true" /> : <Play size={14} aria-hidden="true" />}
             <span>{opened ? '收起试听' : '试听'}</span>
-            <span className="music-preview__source">网易云音乐</span>
+            <span className="music-preview__source">{sourceLabel}</span>
           </button>
           <button className={`music-preview__login${accountStatus === 'logged-in' ? ' music-preview__login--active' : ''}`} type="button" onClick={openNeteaseLogin} title={loginButtonTitle} aria-label={loginButtonTitle}>
             {accountStatus === 'checking' ? <LoaderCircle size={13} className="music-preview__spinner" aria-hidden="true" /> : accountStatus === 'logged-in' ? <Check size={13} aria-hidden="true" /> : <LogIn size={13} aria-hidden="true" />}
@@ -317,7 +318,7 @@ export default function MusicPreviewBar({ subject, endpoint, albumEndpoint, audi
         <div className="music-preview__body">
           {loading && <p className="music-preview__status"><LoaderCircle size={14} className="music-preview__spinner" aria-hidden="true" />正在匹配曲目...</p>}
           {!loading && error && <p className="music-preview__status music-preview__status--error">{error}</p>}
-          {!loading && !error && result && songs.length === 0 && <p className="music-preview__status">没有找到匹配的网易云曲目</p>}
+          {!loading && !error && result && songs.length === 0 && <p className="music-preview__status">没有找到匹配的{sourceLabel}曲目</p>}
           {!loading && !error && songs.length > 0 && <p className="music-preview__status">已匹配 {songs.length} 首，点击原生曲目右侧的试听按钮播放</p>}
         </div>
       )}
