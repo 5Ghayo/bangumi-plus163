@@ -7,6 +7,29 @@ export function getSubjectIdFromLocation(location: Location = window.location): 
   return match ? Number(match[1]) : null;
 }
 
+const SUBJECT_TYPE_BY_PATH: Array<[RegExp, number]> = [
+  [/\/book\/?$/, 1],
+  [/\/anime\/?$/, 2],
+  [/\/music\/?$/, 3],
+  [/\/game\/?$/, 4],
+  [/\/real\/?$/, 6],
+];
+
+export function getBangumiSubjectType(documentRef: Document = document): number | null {
+  // bgm.tv keeps the focused subject-type tab in the top nav, e.g. /music/ for music entries.
+  const navFocus = documentRef.querySelector<HTMLAnchorElement>('#navMenuNeue a.focus');
+  const href = navFocus?.getAttribute('href') ?? '';
+  if (!href) return null;
+  for (const [pattern, type] of SUBJECT_TYPE_BY_PATH) {
+    if (pattern.test(href)) return type;
+  }
+  return null;
+}
+
+export function isMusicSubjectPage(documentRef: Document = document): boolean {
+  return getBangumiSubjectType(documentRef) === 3;
+}
+
 export function findBangumiMountPoint(): HTMLElement | null {
   const main = document.querySelector<HTMLElement>('#main');
   return main ?? document.querySelector<HTMLElement>('.mainWrapper');

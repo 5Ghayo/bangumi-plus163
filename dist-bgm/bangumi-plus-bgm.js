@@ -19152,6 +19152,25 @@
     const match = location.pathname.match(SUBJECT_PATH);
     return match ? Number(match[1]) : null;
   }
+  var SUBJECT_TYPE_BY_PATH = [
+    [/\/book\/?$/, 1],
+    [/\/anime\/?$/, 2],
+    [/\/music\/?$/, 3],
+    [/\/game\/?$/, 4],
+    [/\/real\/?$/, 6],
+  ];
+  function getBangumiSubjectType(documentRef = document) {
+    const href =
+      documentRef.querySelector("#navMenuNeue a.focus")?.getAttribute("href") ??
+      "";
+    if (!href) return null;
+    for (const [pattern, type] of SUBJECT_TYPE_BY_PATH)
+      if (pattern.test(href)) return type;
+    return null;
+  }
+  function isMusicSubjectPage(documentRef = document) {
+    return getBangumiSubjectType(documentRef) === 3;
+  }
   function findBangumiMountPoint() {
     return (
       document.querySelector("#main") ?? document.querySelector(".mainWrapper")
@@ -20066,10 +20085,17 @@
   async function mount() {
     const subjectId = getSubjectIdFromLocation();
     if (!subjectId) return;
+    if (!isMusicSubjectPage()) {
+      console.info(
+        "[bangumi-plus/bgm] not a music subject, skipped",
+        location.pathname,
+      );
+      return;
+    }
     try {
       await waitForTrackList();
       const mount = createBangumiTrackListShadowMount({
-        launcherLabel: "试听 某GD接口音乐台",
+        launcherLabel: "试听",
       });
       if (!mount) {
         console.info("[bangumi-plus/bgm] mount skipped", {
@@ -20091,7 +20117,6 @@
           audioEndpoint: NETEASE_AUDIO_ENDPOINT,
           accountEndpoint: NETEASE_ACCOUNT_ENDPOINT,
           requestJson,
-          sourceLabel: "某GD接口音乐台",
         }),
       );
       window.setTimeout(() => {

@@ -2,7 +2,7 @@
 import { createRoot } from 'react-dom/client';
 import MusicPreviewBar from './components/MusicPreviewBar';
 import appStyles from './App.css?inline';
-import { createBangumiTrackListShadowMount, findBangumiTrackListElement, findBangumiTrackListMountPoint, getSubjectIdFromLocation } from './integration/bangumiPage';
+import { createBangumiTrackListShadowMount, findBangumiTrackListElement, findBangumiTrackListMountPoint, getSubjectIdFromLocation, isMusicSubjectPage } from './integration/bangumiPage';
 import type { BangumiSubject } from './types/bangumi';
 import type { JsonRequester } from './lib/neteaseResolver';
 
@@ -159,6 +159,10 @@ function waitForTrackList(timeoutMs = 10000): Promise<void> {
 async function mount() {
   const subjectId = getSubjectIdFromLocation();
   if (!subjectId) return;
+  if (!isMusicSubjectPage()) {
+    console.info('[bangumi-plus] not a music subject, skipped', location.pathname);
+    return;
+  }
 
   try {
     await waitForTrackList();

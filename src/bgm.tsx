@@ -2,7 +2,7 @@
 import { createRoot } from 'react-dom/client';
 import MusicPreviewBar from './components/MusicPreviewBar';
 import appStyles from './App.css?inline';
-import { createBangumiTrackListShadowMount, findBangumiTrackListElement, findBangumiTrackListMountPoint, getSubjectIdFromLocation } from './integration/bangumiPage';
+import { createBangumiTrackListShadowMount, findBangumiTrackListElement, findBangumiTrackListMountPoint, getSubjectIdFromLocation, isMusicSubjectPage } from './integration/bangumiPage';
 import { createGdstudioRequester } from './lib/gdstudioResolver';
 import type { BangumiSubject } from './types/bangumi';
 
@@ -110,10 +110,14 @@ function waitForTrackList(timeoutMs = 10000): Promise<void> {
 async function mount() {
   const subjectId = getSubjectIdFromLocation();
   if (!subjectId) return;
+  if (!isMusicSubjectPage()) {
+    console.info('[bangumi-plus/bgm] not a music subject, skipped', location.pathname);
+    return;
+  }
 
   try {
     await waitForTrackList();
-    const mount = createBangumiTrackListShadowMount({ launcherLabel: '试听 某GD接口音乐台' });
+    const mount = createBangumiTrackListShadowMount({ launcherLabel: '试听' });
     if (!mount) {
       console.info('[bangumi-plus/bgm] mount skipped', {
         host: location.hostname,
@@ -137,7 +141,6 @@ async function mount() {
         audioEndpoint={NETEASE_AUDIO_ENDPOINT}
         accountEndpoint={NETEASE_ACCOUNT_ENDPOINT}
         requestJson={requestJson}
-        sourceLabel="某GD接口音乐台"
       />,
     );
     window.setTimeout(() => {

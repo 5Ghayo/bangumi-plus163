@@ -9,8 +9,6 @@ lerna-debug.log*
 
 node_modules
 dist
-dist-userscript
-dist-bgm
 dist-ssr
 *.local
 
