@@ -18987,9 +18987,11 @@
     const data = await requestJson$1(url, signal, requester);
     if (data.code !== void 0 && data.code !== 200)
       throw new Error(`网易云专辑加载失败（${data.code}）`);
-    return (data.album?.songs ?? data.songs ?? data.resource?.songs ?? []).map(
-      (song) => mapSong(song, data.album),
-    );
+    return (
+      [data.album?.songs, data.songs, data.resource?.songs].find(
+        (candidate) => candidate?.length,
+      ) ?? []
+    ).map((song) => mapSong(song, data.album));
   }
   function normalize(value) {
     return value
@@ -19128,6 +19130,12 @@
       )[0]?.song ?? songs[0]
     );
   }
+  function titleMatches(songName, trackTitle) {
+    const title = normalize(trackTitle ?? "");
+    const name = normalize(songName);
+    if (!title || !name) return false;
+    return name === title || name.includes(title) || title.includes(name);
+  }
   async function loadMatchingAlbum(
     candidates,
     expectedAlbum,
@@ -19161,11 +19169,22 @@
     }
     return null;
   }
+  async function loadAlbumForFirstMatch(song, endpoint, signal, requester) {
+    if (!song.albumId) return null;
+    const complete = await getAlbumSongs(
+      song.albumId,
+      endpoint,
+      signal,
+      requester,
+    );
+    return complete.some((track) => track.id === song.id) ? complete : null;
+  }
   async function resolveNeteaseTracks({
     query,
     expectedAlbum,
     trackTitle,
     expectedArtists,
+    autoFillAlbumOnFirstMatch = false,
     mode = "auto",
     endpoint = "/api/netease/search/get/web",
     albumEndpoint = "/api/netease/album",
@@ -19201,6 +19220,33 @@
           chooseSingleSong(songs, trackTitle, expectedAlbum, expectedArtists),
         ],
       };
+    if (autoFillAlbumOnFirstMatch) {
+      const firstMatch = chooseSingleSong(
+        songs,
+        trackTitle,
+        expectedAlbum,
+        expectedArtists,
+      );
+      if (titleMatches(firstMatch.name, trackTitle))
+        try {
+          const collection = await loadAlbumForFirstMatch(
+            firstMatch,
+            albumEndpoint,
+            signal,
+            requester,
+          );
+          if (collection?.length)
+            return {
+              mode: "album",
+              songs: collection,
+              albumName: collection[0].albumName,
+              albumId: collection[0].albumId,
+            };
+        } catch (reason) {
+          if (reason instanceof DOMException && reason.name === "AbortError")
+            throw reason;
+        }
+    }
     const collection = await loadMatchingAlbum(
       chooseAlbumCandidates(songs, query, expectedArtists),
       expectedAlbum?.trim() || query,
@@ -19225,6 +19271,7 @@
     expectedAlbum,
     trackTitle,
     expectedArtists,
+    autoFillAlbumOnFirstMatch = false,
     mode = "auto",
     endpoint,
     albumEndpoint,
@@ -19242,7 +19289,7 @@
         ?.map((artist) => artist.trim())
         .filter(Boolean)
         .join("|") ?? "";
-    const requestKey = `${cacheKey}|${enabled}|${endpoint ?? ""}|${albumEndpoint ?? ""}|${mode}|${query.trim()}|${expectedAlbum?.trim() ?? ""}|${trackTitle?.trim() ?? ""}|${expectedArtistsKey}|${requestJson ? "custom" : "fetch"}`;
+    const requestKey = `${cacheKey}|${enabled}|${endpoint ?? ""}|${albumEndpoint ?? ""}|${mode}|${query.trim()}|${expectedAlbum?.trim() ?? ""}|${trackTitle?.trim() ?? ""}|${expectedArtistsKey}|${autoFillAlbumOnFirstMatch}|${requestJson ? "custom" : "fetch"}`;
     (0, import_react.useEffect)(() => {
       if (!enabled || !query.trim()) return;
       const controller = new AbortController();
@@ -19251,6 +19298,7 @@
         expectedAlbum,
         trackTitle,
         expectedArtists,
+        autoFillAlbumOnFirstMatch,
         mode,
         endpoint,
         albumEndpoint,
@@ -19276,6 +19324,7 @@
       return () => controller.abort();
     }, [
       albumEndpoint,
+      autoFillAlbumOnFirstMatch,
       enabled,
       endpoint,
       expectedAlbum,
@@ -19531,7 +19580,13 @@
       )[0]?.song ?? null
     );
   }
-  function matchRowsWithSongs(rows, songs, resultMode, expectedArtists) {
+  function matchRowsWithSongs(
+    rows,
+    songs,
+    resultMode,
+    expectedArtists,
+    autoFillOnFirstMatch,
+  ) {
     const usedSongIds = /* @__PURE__ */ new Set();
     const matches = rows.map((row) => {
       const song = matchSong(
@@ -19545,7 +19600,12 @@
     const unusedSongs = songs.filter((song) => !usedSongIds.has(song.id));
     let unusedIndex = 0;
     if (resultMode !== "album") return matches;
-    if (matches.filter(Boolean).length < ALBUM_AUTO_FILL_MIN_MATCHES)
+    const matchedCount = matches.filter(Boolean).length;
+    if (
+      autoFillOnFirstMatch
+        ? !matches[0]
+        : matchedCount < ALBUM_AUTO_FILL_MIN_MATCHES
+    )
       return matches;
     return matches.map((song) => song ?? unusedSongs[unusedIndex++]);
   }
@@ -19558,6 +19618,7 @@
     requestJson,
     mode = "auto",
     sourceLabel = "网易云音乐",
+    autoFillAlbumOnFirstMatch = false,
   }) {
     const [opened, setOpened] = (0, import_react.useState)(false);
     const [searchSession, setSearchSession] = (0, import_react.useState)(0);
@@ -19652,6 +19713,7 @@
         songs,
         result.mode,
         expectedArtists,
+        autoFillAlbumOnFirstMatch,
       );
       for (const [index, song] of rowMatches.entries()) {
         const heading = rows[index].querySelector("h6");
@@ -19669,7 +19731,14 @@
         for (const binding of bindings) binding.host.remove();
         rowBindingStore.replace([]);
       };
-    }, [expectedArtists, opened, result, rowBindingStore, songs]);
+    }, [
+      autoFillAlbumOnFirstMatch,
+      expectedArtists,
+      opened,
+      result,
+      rowBindingStore,
+      songs,
+    ]);
     (0, import_react.useEffect)(() => {
       const audio = audioRef.current;
       if (!audio) return;
@@ -20369,6 +20438,7 @@
           accountEndpoint: NETEASE_ACCOUNT_ENDPOINT,
           requestJson,
           sourceLabel: "本地 NCM",
+          autoFillAlbumOnFirstMatch: true,
         }),
       );
       window.setTimeout(() => {

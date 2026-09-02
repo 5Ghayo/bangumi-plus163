@@ -18,6 +18,7 @@ interface Props {
   requestJson: JsonRequester;
   mode?: NeteaseResolveMode;
   sourceLabel?: string;
+  autoFillAlbumOnFirstMatch?: boolean;
 }
 
 interface NeteaseAccountResponse {
@@ -123,7 +124,13 @@ function matchSong(title: string, songs: NeteaseSong[], expectedArtists: string[
     .sort((a, b) => b.artistScore - a.artistScore)[0]?.song ?? null;
 }
 
-function matchRowsWithSongs(rows: HTMLElement[], songs: NeteaseSong[], resultMode: 'single' | 'album', expectedArtists: string[]) {
+function matchRowsWithSongs(
+  rows: HTMLElement[],
+  songs: NeteaseSong[],
+  resultMode: 'single' | 'album',
+  expectedArtists: string[],
+  autoFillOnFirstMatch: boolean,
+) {
   const usedSongIds = new Set<number>();
   const matches = rows.map((row) => {
     const title = getBangumiTrackTitle(row).replace(/\s*[／/].*$/, '');
@@ -137,12 +144,22 @@ function matchRowsWithSongs(rows: HTMLElement[], songs: NeteaseSong[], resultMod
   let unusedIndex = 0;
   if (resultMode !== 'album') return matches;
   const matchedCount = matches.filter(Boolean).length;
-  if (matchedCount < ALBUM_AUTO_FILL_MIN_MATCHES) return matches;
+  if (autoFillOnFirstMatch ? !matches[0] : matchedCount < ALBUM_AUTO_FILL_MIN_MATCHES) return matches;
 
   return matches.map((song) => song ?? unusedSongs[unusedIndex++]);
 }
 
-export default function MusicPreviewBar({ subject, endpoint, albumEndpoint, audioEndpoint, accountEndpoint, requestJson, mode = 'auto', sourceLabel = '网易云音乐' }: Props) {
+export default function MusicPreviewBar({
+  subject,
+  endpoint,
+  albumEndpoint,
+  audioEndpoint,
+  accountEndpoint,
+  requestJson,
+  mode = 'auto',
+  sourceLabel = '网易云音乐',
+  autoFillAlbumOnFirstMatch = false,
+}: Props) {
   const [opened, setOpened] = useState(false);
   const [searchSession, setSearchSession] = useState(0);
   const [player, setPlayer] = useState<AudioPlayerState>(EMPTY_PLAYER);
@@ -228,7 +245,7 @@ export default function MusicPreviewBar({ subject, endpoint, albumEndpoint, audi
 
     const bindings: RowBinding[] = [];
     const rows = findBangumiTrackRows();
-    const rowMatches = matchRowsWithSongs(rows, songs, result.mode, expectedArtists);
+    const rowMatches = matchRowsWithSongs(rows, songs, result.mode, expectedArtists, autoFillAlbumOnFirstMatch);
     for (const [index, song] of rowMatches.entries()) {
       const row = rows[index];
       const heading = row.querySelector<HTMLElement>('h6');
@@ -245,7 +262,7 @@ export default function MusicPreviewBar({ subject, endpoint, albumEndpoint, audi
       for (const binding of bindings) binding.host.remove();
       rowBindingStore.replace([]);
     };
-  }, [expectedArtists, opened, result, rowBindingStore, songs]);
+  }, [autoFillAlbumOnFirstMatch, expectedArtists, opened, result, rowBindingStore, songs]);
 
   useEffect(() => {
     const audio = audioRef.current;

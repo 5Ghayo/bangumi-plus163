@@ -42,6 +42,7 @@ export interface ResolveNeteaseTracksOptions {
   expectedAlbum?: string;
   trackTitle?: string;
   expectedArtists?: string[];
+  autoFillAlbumOnFirstMatch?: boolean;
   mode?: NeteaseResolveMode;
   endpoint?: string;
   albumEndpoint?: string;
@@ -135,7 +136,8 @@ async function getAlbumSongs(albumId: number, endpoint: string, signal: AbortSig
   url.pathname = `${url.pathname.replace(/\/$/, '')}/${albumId}`;
   const data = await requestJson<AlbumResponse>(url, signal, requester);
   if (data.code !== undefined && data.code !== 200) throw new Error(`网易云专辑加载失败（${data.code}）`);
-  const songs = data.album?.songs ?? data.songs ?? data.resource?.songs ?? [];
+  const songs = [data.album?.songs, data.songs, data.resource?.songs]
+    .find((candidate) => candidate?.length) ?? [];
   return songs.map((song) => mapSong(song, data.album));
 }
 
@@ -234,6 +236,13 @@ function chooseSingleSong(songs: NeteaseSong[], trackTitle: string | undefined, 
   return [...usableCandidates].sort((a, b) => b.score - a.score)[0]?.song ?? songs[0];
 }
 
+function titleMatches(songName: string, trackTitle: string | undefined) {
+  const title = normalize(trackTitle ?? '');
+  const name = normalize(songName);
+  if (!title || !name) return false;
+  return name === title || name.includes(title) || title.includes(name);
+}
+
 async function loadMatchingAlbum(candidates: NeteaseSong[][], expectedAlbum: string, endpoint: string, signal: AbortSignal | undefined, requester?: JsonRequester) {
   const matchingCandidates = expectedAlbum.trim()
     ? candidates.filter((candidate) => albumNameMatches(candidate[0]?.albumName, expectedAlbum))
@@ -252,11 +261,18 @@ async function loadMatchingAlbum(candidates: NeteaseSong[][], expectedAlbum: str
   return null;
 }
 
+async function loadAlbumForFirstMatch(song: NeteaseSong, endpoint: string, signal: AbortSignal | undefined, requester?: JsonRequester) {
+  if (!song.albumId) return null;
+  const complete = await getAlbumSongs(song.albumId, endpoint, signal, requester);
+  return complete.some((track) => track.id === song.id) ? complete : null;
+}
+
 export async function resolveNeteaseTracks({
   query,
   expectedAlbum,
   trackTitle,
   expectedArtists,
+  autoFillAlbumOnFirstMatch = false,
   mode = 'auto',
   endpoint = '/api/netease/search/get/web',
   albumEndpoint = '/api/netease/album',
@@ -273,6 +289,20 @@ export async function resolveNeteaseTracks({
   const songs = uniqueSongs(successful);
   if (songs.length === 0) return { mode: 'single', songs: [] };
   if (mode === 'single') return { mode: 'single', songs: [chooseSingleSong(songs, trackTitle, expectedAlbum, expectedArtists)] };
+
+  if (autoFillAlbumOnFirstMatch) {
+    const firstMatch = chooseSingleSong(songs, trackTitle, expectedAlbum, expectedArtists);
+    if (titleMatches(firstMatch.name, trackTitle)) {
+      try {
+        const collection = await loadAlbumForFirstMatch(firstMatch, albumEndpoint, signal, requester);
+        if (collection?.length) {
+          return { mode: 'album', songs: collection, albumName: collection[0].albumName, albumId: collection[0].albumId };
+        }
+      } catch (reason) {
+        if (reason instanceof DOMException && reason.name === 'AbortError') throw reason;
+      }
+    }
+  }
 
   const candidates = chooseAlbumCandidates(songs, query, expectedArtists);
   const collection = await loadMatchingAlbum(candidates, expectedAlbum?.trim() || query, albumEndpoint, signal, requester);

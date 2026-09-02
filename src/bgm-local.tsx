@@ -147,6 +147,7 @@ async function mount() {
         accountEndpoint={NETEASE_ACCOUNT_ENDPOINT}
         requestJson={requestJson}
         sourceLabel="本地 NCM"
+        autoFillAlbumOnFirstMatch
       />,
     );
     window.setTimeout(() => {

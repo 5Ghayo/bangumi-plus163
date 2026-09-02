@@ -11,6 +11,7 @@ interface Options {
   expectedAlbum?: string;
   trackTitle?: string;
   expectedArtists?: string[];
+  autoFillAlbumOnFirstMatch?: boolean;
   mode?: NeteaseResolveMode;
   endpoint?: string;
   albumEndpoint?: string;
@@ -24,6 +25,7 @@ export function useNeteaseTracks({
   expectedAlbum,
   trackTitle,
   expectedArtists,
+  autoFillAlbumOnFirstMatch = false,
   mode = 'auto',
   endpoint,
   albumEndpoint,
@@ -37,7 +39,7 @@ export function useNeteaseTracks({
     error: string | null;
   }>({ key: '', result: null, error: null });
   const expectedArtistsKey = expectedArtists?.map((artist) => artist.trim()).filter(Boolean).join('|') ?? '';
-  const requestKey = `${cacheKey}|${enabled}|${endpoint ?? ''}|${albumEndpoint ?? ''}|${mode}|${query.trim()}|${expectedAlbum?.trim() ?? ''}|${trackTitle?.trim() ?? ''}|${expectedArtistsKey}|${requestJson ? 'custom' : 'fetch'}`;
+  const requestKey = `${cacheKey}|${enabled}|${endpoint ?? ''}|${albumEndpoint ?? ''}|${mode}|${query.trim()}|${expectedAlbum?.trim() ?? ''}|${trackTitle?.trim() ?? ''}|${expectedArtistsKey}|${autoFillAlbumOnFirstMatch}|${requestJson ? 'custom' : 'fetch'}`;
 
   useEffect(() => {
     if (!enabled || !query.trim()) {
@@ -51,6 +53,7 @@ export function useNeteaseTracks({
       expectedAlbum,
       trackTitle,
       expectedArtists,
+      autoFillAlbumOnFirstMatch,
       mode,
       endpoint,
       albumEndpoint,
@@ -69,7 +72,7 @@ export function useNeteaseTracks({
       });
 
     return () => controller.abort();
-  }, [albumEndpoint, enabled, endpoint, expectedAlbum, expectedArtists, mode, query, requestJson, requestKey, trackTitle]);
+  }, [albumEndpoint, autoFillAlbumOnFirstMatch, enabled, endpoint, expectedAlbum, expectedArtists, mode, query, requestJson, requestKey, trackTitle]);
 
   const activeRequest = enabled && query.trim() ? requestKey : null;
   const isSettled = activeRequest !== null && settled.key === activeRequest;
