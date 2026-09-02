@@ -15,6 +15,7 @@ export interface NeteaseSong {
   id: number;
   name: string;
   artist: string;
+  artistAliases?: string[];
   duration?: number; // ms
   coverUrl?: string;
   albumName?: string;

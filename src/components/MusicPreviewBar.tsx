@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import { Check, ChevronUp, LoaderCircle, LogIn, Minus, Play, Plus, X } from 'lucide-react';
 import TrackPreviewControl, { type AudioPlayerState } from './TrackPreviewControl';
 import { useNeteaseTracks } from '../hooks/useNeteaseTracks';
-import { findBangumiTrackRows, getBangumiTrackTitle } from '../integration/bangumiPage';
+import { findBangumiTrackRows, getBangumiArtistNames, getBangumiTrackTitle } from '../integration/bangumiPage';
 import { resolveNeteaseAudioUrl } from '../lib/neteaseResolver';
 import type { JsonRequester } from '../lib/neteaseResolver';
 import type { BangumiSubject, NeteaseResolveMode, NeteaseSong } from '../types/bangumi';
@@ -62,6 +62,7 @@ const EMPTY_PLAYER: AudioPlayerState = {
 };
 
 const VOLUME_STORAGE_KEY = 'bangumi-plus-music-volume';
+const ALBUM_AUTO_FILL_MIN_MATCHES = 2;
 
 function readStoredVolume() {
   try {
@@ -83,17 +84,62 @@ function normalizeTrackTitle(title: string) {
     .toLocaleLowerCase();
 }
 
-function matchSong(title: string, songs: NeteaseSong[]) {
+function artistOverlapScore(song: NeteaseSong, expectedArtists: string[]) {
+  if (!expectedArtists.length || !song.artist.trim()) return 0;
+  const artists = [song.artist, ...(song.artistAliases ?? [])]
+    .flatMap((artist) => artist.split(/\s*\/\s*/))
+    .map((artist) => normalizeTrackTitle(artist));
+  return expectedArtists.reduce((score, expected) => {
+    const normalizedExpected = normalizeTrackTitle(expected);
+    const best = artists.reduce((artistScore, artist) => {
+      if (!artist || !normalizedExpected) return artistScore;
+      if (artist === normalizedExpected) return Math.max(artistScore, 1);
+      if (artist.includes(normalizedExpected) || normalizedExpected.includes(artist)) return Math.max(artistScore, 0.6);
+      return artistScore;
+    }, 0);
+    return score + best;
+  }, 0);
+}
+
+function matchSong(title: string, songs: NeteaseSong[], expectedArtists: string[] = []) {
   const normalizedTitle = normalizeTrackTitle(title);
   if (!normalizedTitle) return null;
 
-  const exact = songs.find((song) => normalizeTrackTitle(song.name) === normalizedTitle);
-  if (exact) return exact;
+  const candidates = songs
+    .map((song, index) => {
+      const name = normalizeTrackTitle(song.name);
+      const isExact = name === normalizedTitle;
+      const titleScore = isExact ? 1000
+        : name.includes(normalizedTitle) || normalizedTitle.includes(name) ? -Math.abs(name.length - normalizedTitle.length)
+          : -Infinity;
+      return { song, name, titleScore, artistScore: artistOverlapScore(song, expectedArtists), index };
+    })
+    .filter(({ name: normalizedSongName }) => normalizedSongName.length > 2 && (normalizedSongName.includes(normalizedTitle) || normalizedTitle.includes(normalizedSongName)))
+    .sort((a, b) => a.index - b.index);
 
-  return songs
-    .map((song) => ({ song, name: normalizeTrackTitle(song.name) }))
-    .filter(({ name }) => name.length > 2 && (name.includes(normalizedTitle) || normalizedTitle.includes(name)))
-    .sort((a, b) => Math.abs(a.name.length - normalizedTitle.length) - Math.abs(b.name.length - normalizedTitle.length))[0]?.song ?? null;
+  const exactCandidates = candidates.filter(({ titleScore }) => titleScore === 1000);
+  const usableCandidates = exactCandidates.length > 0 ? exactCandidates : candidates;
+  return [...usableCandidates]
+    .sort((a, b) => b.artistScore - a.artistScore)[0]?.song ?? null;
+}
+
+function matchRowsWithSongs(rows: HTMLElement[], songs: NeteaseSong[], resultMode: 'single' | 'album', expectedArtists: string[]) {
+  const usedSongIds = new Set<number>();
+  const matches = rows.map((row) => {
+    const title = getBangumiTrackTitle(row).replace(/\s*[／/].*$/, '');
+    const availableSongs = songs.filter((song) => !usedSongIds.has(song.id));
+    const song = matchSong(title, availableSongs, expectedArtists);
+    if (song) usedSongIds.add(song.id);
+    return song;
+  });
+
+  const unusedSongs = songs.filter((song) => !usedSongIds.has(song.id));
+  let unusedIndex = 0;
+  if (resultMode !== 'album') return matches;
+  const matchedCount = matches.filter(Boolean).length;
+  if (matchedCount < ALBUM_AUTO_FILL_MIN_MATCHES) return matches;
+
+  return matches.map((song) => song ?? unusedSongs[unusedIndex++]);
 }
 
 export default function MusicPreviewBar({ subject, endpoint, albumEndpoint, audioEndpoint, accountEndpoint, requestJson, mode = 'auto', sourceLabel = '网易云音乐' }: Props) {
@@ -114,8 +160,21 @@ export default function MusicPreviewBar({ subject, endpoint, albumEndpoint, audi
 
   const displayName = subject.name_cn || subject.name;
   const query = subject.name_cn && subject.name !== subject.name_cn ? `${subject.name_cn} ${subject.name}` : displayName;
+  const trackTitle = useMemo(() => {
+    if (!opened) return '';
+    return findBangumiTrackRows()
+      .map((row) => getBangumiTrackTitle(row).replace(/\s*[／/].*$/, ''))
+      .find(Boolean) ?? '';
+  }, [opened]);
+  const expectedArtists = useMemo(() => {
+    if (!opened) return [];
+    return getBangumiArtistNames();
+  }, [opened]);
   const { result, loading, error } = useNeteaseTracks({
     query,
+    expectedAlbum: displayName,
+    trackTitle,
+    expectedArtists,
     mode,
     endpoint,
     albumEndpoint,
@@ -168,8 +227,10 @@ export default function MusicPreviewBar({ subject, endpoint, albumEndpoint, audi
     }
 
     const bindings: RowBinding[] = [];
-    for (const row of findBangumiTrackRows()) {
-      const song = matchSong(getBangumiTrackTitle(row), songs);
+    const rows = findBangumiTrackRows();
+    const rowMatches = matchRowsWithSongs(rows, songs, result.mode, expectedArtists);
+    for (const [index, song] of rowMatches.entries()) {
+      const row = rows[index];
       const heading = row.querySelector<HTMLElement>('h6');
       if (!song || !heading) continue;
 
@@ -184,7 +245,7 @@ export default function MusicPreviewBar({ subject, endpoint, albumEndpoint, audi
       for (const binding of bindings) binding.host.remove();
       rowBindingStore.replace([]);
     };
-  }, [opened, result, rowBindingStore, songs]);
+  }, [expectedArtists, opened, result, rowBindingStore, songs]);
 
   useEffect(() => {
     const audio = audioRef.current;

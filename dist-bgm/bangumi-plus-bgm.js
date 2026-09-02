@@ -18935,15 +18935,23 @@
       );
     return source.url.replace(/^http:/, "https:");
   }
+  function getSongArtists(song) {
+    return (song.artists ?? song.ar ?? [])
+      .map((artist) => artist.name)
+      .filter(Boolean);
+  }
+  function getSongArtistAliases(song) {
+    return (song.artists ?? song.ar ?? [])
+      .flatMap((artist) => [...(artist.alias ?? []), ...(artist.trans ?? [])])
+      .filter(Boolean);
+  }
   function mapSong(song, album) {
     const songAlbum = song.album ?? song.al;
     return {
       id: song.id,
       name: song.name,
-      artist: (song.artists ?? song.ar ?? [])
-        .map((artist) => artist.name)
-        .filter(Boolean)
-        .join(" / "),
+      artist: getSongArtists(song).join(" / "),
+      artistAliases: getSongArtistAliases(song),
       duration: song.duration ?? song.dt,
       albumName: songAlbum?.name ?? album?.name,
       albumId: songAlbum?.id ?? album?.id,
@@ -18979,8 +18987,8 @@
     const data = await requestJson$1(url, signal, requester);
     if (data.code !== void 0 && data.code !== 200)
       throw new Error(`网易云专辑加载失败（${data.code}）`);
-    return (data.album?.songs ?? data.resource?.songs ?? []).map((song) =>
-      mapSong(song, data.album),
+    return (data.album?.songs ?? data.songs ?? data.resource?.songs ?? []).map(
+      (song) => mapSong(song, data.album),
     );
   }
   function normalize(value) {
@@ -18990,12 +18998,70 @@
       .replace(/[\p{P}\p{S}\s　]/gu, "")
       .toLocaleLowerCase();
   }
-  function getSearchQueries(query) {
-    const trimmed = query.trim();
-    const tokens = trimmed.split(/\s+/).filter((token) => token.length > 1);
-    return [.../* @__PURE__ */ new Set([trimmed, ...tokens])].slice(0, 4);
+  function normalizeArtist(value) {
+    return normalize(value.replace(/\s+/g, " "));
   }
-  function chooseAlbum(songs, query) {
+  function artistOverlapScore$1(song, expectedArtists) {
+    if (!expectedArtists?.length || !song.artist.trim()) return 0;
+    const songArtists = [song.artist, ...(song.artistAliases ?? [])]
+      .flatMap((artist) => artist.split(/\s*\/\s*/))
+      .map(normalizeArtist)
+      .filter(Boolean);
+    return expectedArtists
+      .map(normalizeArtist)
+      .filter(Boolean)
+      .reduce((score, expected) => {
+        return (
+          score +
+          songArtists.reduce((artistScore, artist) => {
+            if (artist === expected) return Math.max(artistScore, 1);
+            if (artist.includes(expected) || expected.includes(artist))
+              return Math.max(artistScore, 0.6);
+            return artistScore;
+          }, 0)
+        );
+      }, 0);
+  }
+  function getSearchQueries(query, trackTitle) {
+    const trimmed = query.trim();
+    const track = trackTitle?.trim();
+    const trackWithAlbum = track ? `${track} ${trimmed}` : "";
+    const tokens = trimmed.split(/\s+/).filter((token) => token.length > 1);
+    return [.../* @__PURE__ */ new Set([trackWithAlbum, trimmed, ...tokens])]
+      .filter(Boolean)
+      .slice(0, 4);
+  }
+  function albumNameMatches(albumName, expectedAlbum) {
+    if (!expectedAlbum.trim()) return true;
+    if (!albumName?.trim()) return false;
+    const album = normalize(albumName);
+    const expected = normalize(expectedAlbum);
+    if (!album || !expected) return false;
+    if (
+      album === expected ||
+      album.includes(expected) ||
+      expected.includes(album)
+    )
+      return true;
+    const albumTokens = albumName
+      .split(/\s+/)
+      .map(normalize)
+      .filter((token) => token.length > 1);
+    return expectedAlbum
+      .split(/\s+/)
+      .map(normalize)
+      .filter((token) => token.length > 1)
+      .some((expectedToken) =>
+        albumTokens.some((albumToken) => {
+          return (
+            albumToken === expectedToken ||
+            albumToken.includes(expectedToken) ||
+            expectedToken.includes(albumToken)
+          );
+        }),
+      );
+  }
+  function chooseAlbumCandidates(songs, query, expectedArtists) {
     const queryValue = normalize(query);
     const tokens = query
       .split(/\s+/)
@@ -19006,65 +19072,100 @@
       if (!song.albumId) continue;
       groups.set(song.albumId, [...(groups.get(song.albumId) ?? []), song]);
     }
+    return [...groups.values()].sort((a, b) => {
+      const score = (group) => {
+        const album = normalize(group[0].albumName ?? "");
+        const exact =
+          queryValue &&
+          (album.includes(queryValue) || queryValue.includes(album))
+            ? 1e3
+            : 0;
+        const artistScore = Math.max(
+          ...group.map((song) => artistOverlapScore$1(song, expectedArtists)),
+          0,
+        );
+        return (
+          exact +
+          tokens.filter((token) => album.includes(token)).length * 100 +
+          artistScore * 500 +
+          group.length
+        );
+      };
+      return score(b) - score(a);
+    });
+  }
+  function chooseSingleSong(songs, trackTitle, expectedAlbum, expectedArtists) {
+    const normalizedTrack = normalize(trackTitle ?? "");
+    const normalizedAlbum = normalize(expectedAlbum ?? "");
+    const candidates = songs.map((song, index) => {
+      const title = normalize(song.name);
+      const titleScore = !normalizedTrack
+        ? 0
+        : title === normalizedTrack
+          ? 1e3
+          : title.includes(normalizedTrack) || normalizedTrack.includes(title)
+            ? 700 - Math.abs(title.length - normalizedTrack.length)
+            : 0;
+      const albumScore =
+        normalizedAlbum &&
+        song.albumName &&
+        normalize(song.albumName).includes(normalizedAlbum)
+          ? 300
+          : 0;
+      const artistScore = artistOverlapScore$1(song, expectedArtists) * 500;
+      return {
+        song,
+        titleScore,
+        score: titleScore + albumScore + artistScore - index / songs.length,
+      };
+    });
+    const exactCandidates = normalizedTrack
+      ? candidates.filter(({ titleScore }) => titleScore === 1e3)
+      : [];
     return (
-      [...groups.values()].sort((a, b) => {
-        const score = (group) => {
-          const album = normalize(group[0].albumName ?? "");
-          return (
-            (queryValue &&
-            (album.includes(queryValue) || queryValue.includes(album))
-              ? 1e3
-              : 0) +
-            tokens.filter((token) => album.includes(token)).length * 100 +
-            group.length
-          );
-        };
-        return score(b) - score(a);
-      })[0] ?? null
+      [...(exactCandidates.length > 0 ? exactCandidates : candidates)].sort(
+        (a, b) => b.score - a.score,
+      )[0]?.song ?? songs[0]
     );
   }
-  async function completeAlbum(
-    candidate,
-    mode,
-    query,
+  async function loadMatchingAlbum(
+    candidates,
+    expectedAlbum,
     endpoint,
     signal,
     requester,
   ) {
-    if (!candidate?.[0]?.albumId) return candidate;
-    const album = normalize(candidate[0].albumName ?? "");
-    const queryValue = normalize(query);
-    const queryTokens = query
-      .split(/\s+/)
-      .map(normalize)
-      .filter((token) => token.length > 1);
-    const likelyAlbum =
-      candidate.length > 1 ||
-      Boolean(
-        album &&
-        (album.includes(queryValue) ||
-          queryValue.includes(album) ||
-          queryTokens.some(
-            (token) => album.includes(token) || token.includes(album),
-          )),
-      );
-    if (mode !== "album" && !likelyAlbum) return candidate;
-    try {
-      const complete = await getAlbumSongs(
-        candidate[0].albumId,
-        endpoint,
-        signal,
-        requester,
-      );
-      return complete.length > 0 ? complete : candidate;
-    } catch (reason) {
-      if (reason instanceof DOMException && reason.name === "AbortError")
-        throw reason;
-      return candidate;
+    const matchingCandidates = expectedAlbum.trim()
+      ? candidates.filter((candidate) =>
+          albumNameMatches(candidate[0]?.albumName, expectedAlbum),
+        )
+      : candidates;
+    for (const candidate of matchingCandidates) {
+      if (!candidate[0]?.albumId) continue;
+      try {
+        const complete = await getAlbumSongs(
+          candidate[0].albumId,
+          endpoint,
+          signal,
+          requester,
+        );
+        if (
+          complete.length > 0 &&
+          albumNameMatches(complete[0].albumName, expectedAlbum)
+        )
+          return complete;
+      } catch (reason) {
+        if (reason instanceof DOMException && reason.name === "AbortError")
+          throw reason;
+      }
     }
+    return null;
   }
   async function resolveNeteaseTracks({
     query,
+    expectedAlbum,
+    trackTitle,
+    expectedArtists,
     mode = "auto",
     endpoint = "/api/netease/search/get/web",
     albumEndpoint = "/api/netease/album",
@@ -19072,7 +19173,7 @@
     requestJson: requester,
   }) {
     const results = await Promise.allSettled(
-      getSearchQueries(query).map((searchQuery) =>
+      getSearchQueries(query, trackTitle).map((searchQuery) =>
         searchSongs(searchQuery, endpoint, signal, requester),
       ),
     );
@@ -19096,17 +19197,20 @@
     if (mode === "single")
       return {
         mode: "single",
-        songs: [songs[0]],
+        songs: [
+          chooseSingleSong(songs, trackTitle, expectedAlbum, expectedArtists),
+        ],
       };
-    const collection = await completeAlbum(
-      chooseAlbum(songs, query),
-      mode,
-      query,
+    const collection = await loadMatchingAlbum(
+      chooseAlbumCandidates(songs, query, expectedArtists),
+      expectedAlbum?.trim() || query,
       albumEndpoint,
       signal,
       requester,
     );
-    const resolved = collection?.length ? collection : [songs[0]];
+    const resolved = collection?.length
+      ? collection
+      : [chooseSingleSong(songs, trackTitle, expectedAlbum, expectedArtists)];
     return {
       mode: resolved.length > 1 ? "album" : "single",
       songs: resolved,
@@ -19118,6 +19222,9 @@
   //#region src/hooks/useNeteaseTracks.ts
   function useNeteaseTracks({
     query,
+    expectedAlbum,
+    trackTitle,
+    expectedArtists,
     mode = "auto",
     endpoint,
     albumEndpoint,
@@ -19130,12 +19237,20 @@
       result: null,
       error: null,
     });
-    const requestKey = `${cacheKey}|${enabled}|${endpoint ?? ""}|${albumEndpoint ?? ""}|${mode}|${query.trim()}|${requestJson ? "custom" : "fetch"}`;
+    const expectedArtistsKey =
+      expectedArtists
+        ?.map((artist) => artist.trim())
+        .filter(Boolean)
+        .join("|") ?? "";
+    const requestKey = `${cacheKey}|${enabled}|${endpoint ?? ""}|${albumEndpoint ?? ""}|${mode}|${query.trim()}|${expectedAlbum?.trim() ?? ""}|${trackTitle?.trim() ?? ""}|${expectedArtistsKey}|${requestJson ? "custom" : "fetch"}`;
     (0, import_react.useEffect)(() => {
       if (!enabled || !query.trim()) return;
       const controller = new AbortController();
       resolveNeteaseTracks({
         query: query.trim(),
+        expectedAlbum,
+        trackTitle,
+        expectedArtists,
         mode,
         endpoint,
         albumEndpoint,
@@ -19163,10 +19278,13 @@
       albumEndpoint,
       enabled,
       endpoint,
+      expectedAlbum,
+      expectedArtists,
       mode,
       query,
       requestJson,
       requestKey,
+      trackTitle,
     ]);
     const activeRequest = enabled && query.trim() ? requestKey : null;
     const isSettled = activeRequest !== null && settled.key === activeRequest;
@@ -19240,6 +19358,29 @@
   }
   function getBangumiTrackTitle(row) {
     return row.querySelector("h6 a")?.textContent?.trim() ?? "";
+  }
+  function getBangumiArtistNames(documentRef = document) {
+    const artistRow = [...documentRef.querySelectorAll("#infobox li")].find(
+      (row) => {
+        const key =
+          row
+            .querySelector(".tip")
+            ?.textContent?.trim()
+            .replace(/[:：]\s*$/, "") ?? "";
+        return key === "艺术家" || key.startsWith("艺术家");
+      },
+    );
+    if (!artistRow) return [];
+    const value = artistRow.cloneNode(true);
+    value.querySelector(".tip")?.remove();
+    return [
+      ...new Set(
+        value.textContent
+          ?.trim()
+          .split(/\s*(?:[、,，/／]|\n)\s*/)
+          .filter(Boolean) ?? [],
+      ),
+    ];
   }
   function createBangumiTrackListShadowMount(options) {
     const mountPoint = findBangumiTrackListMountPoint();
@@ -19316,6 +19457,7 @@
     error: null,
   };
   var VOLUME_STORAGE_KEY = "bangumi-plus-music-volume";
+  var ALBUM_AUTO_FILL_MIN_MATCHES = 2;
   function readStoredVolume() {
     try {
       const value = Number(window.localStorage.getItem(VOLUME_STORAGE_KEY));
@@ -19332,30 +19474,80 @@
       .replace(/[\s　]+/g, "")
       .toLocaleLowerCase();
   }
-  function matchSong(title, songs) {
+  function artistOverlapScore(song, expectedArtists) {
+    if (!expectedArtists.length || !song.artist.trim()) return 0;
+    const artists = [song.artist, ...(song.artistAliases ?? [])]
+      .flatMap((artist) => artist.split(/\s*\/\s*/))
+      .map((artist) => normalizeTrackTitle(artist));
+    return expectedArtists.reduce((score, expected) => {
+      const normalizedExpected = normalizeTrackTitle(expected);
+      return (
+        score +
+        artists.reduce((artistScore, artist) => {
+          if (!artist || !normalizedExpected) return artistScore;
+          if (artist === normalizedExpected) return Math.max(artistScore, 1);
+          if (
+            artist.includes(normalizedExpected) ||
+            normalizedExpected.includes(artist)
+          )
+            return Math.max(artistScore, 0.6);
+          return artistScore;
+        }, 0)
+      );
+    }, 0);
+  }
+  function matchSong(title, songs, expectedArtists = []) {
     const normalizedTitle = normalizeTrackTitle(title);
     if (!normalizedTitle) return null;
-    const exact = songs.find(
-      (song) => normalizeTrackTitle(song.name) === normalizedTitle,
-    );
-    if (exact) return exact;
-    return (
-      songs
-        .map((song) => ({
+    const candidates = songs
+      .map((song, index) => {
+        const name = normalizeTrackTitle(song.name);
+        return {
           song,
-          name: normalizeTrackTitle(song.name),
-        }))
-        .filter(
-          ({ name }) =>
-            name.length > 2 &&
-            (name.includes(normalizedTitle) || normalizedTitle.includes(name)),
-        )
-        .sort(
-          (a, b) =>
-            Math.abs(a.name.length - normalizedTitle.length) -
-            Math.abs(b.name.length - normalizedTitle.length),
-        )[0]?.song ?? null
+          name,
+          titleScore:
+            name === normalizedTitle
+              ? 1e3
+              : name.includes(normalizedTitle) || normalizedTitle.includes(name)
+                ? -Math.abs(name.length - normalizedTitle.length)
+                : -Infinity,
+          artistScore: artistOverlapScore(song, expectedArtists),
+          index,
+        };
+      })
+      .filter(
+        ({ name: normalizedSongName }) =>
+          normalizedSongName.length > 2 &&
+          (normalizedSongName.includes(normalizedTitle) ||
+            normalizedTitle.includes(normalizedSongName)),
+      )
+      .sort((a, b) => a.index - b.index);
+    const exactCandidates = candidates.filter(
+      ({ titleScore }) => titleScore === 1e3,
     );
+    return (
+      [...(exactCandidates.length > 0 ? exactCandidates : candidates)].sort(
+        (a, b) => b.artistScore - a.artistScore,
+      )[0]?.song ?? null
+    );
+  }
+  function matchRowsWithSongs(rows, songs, resultMode, expectedArtists) {
+    const usedSongIds = /* @__PURE__ */ new Set();
+    const matches = rows.map((row) => {
+      const song = matchSong(
+        getBangumiTrackTitle(row).replace(/\s*[／/].*$/, ""),
+        songs.filter((song) => !usedSongIds.has(song.id)),
+        expectedArtists,
+      );
+      if (song) usedSongIds.add(song.id);
+      return song;
+    });
+    const unusedSongs = songs.filter((song) => !usedSongIds.has(song.id));
+    let unusedIndex = 0;
+    if (resultMode !== "album") return matches;
+    if (matches.filter(Boolean).length < ALBUM_AUTO_FILL_MIN_MATCHES)
+      return matches;
+    return matches.map((song) => song ?? unusedSongs[unusedIndex++]);
   }
   function MusicPreviewBar({
     subject,
@@ -19384,11 +19576,27 @@
       rowBindingStore.getSnapshot,
     );
     const displayName = subject.name_cn || subject.name;
+    const query =
+      subject.name_cn && subject.name !== subject.name_cn
+        ? `${subject.name_cn} ${subject.name}`
+        : displayName;
+    const trackTitle = (0, import_react.useMemo)(() => {
+      if (!opened) return "";
+      return (
+        findBangumiTrackRows()
+          .map((row) => getBangumiTrackTitle(row).replace(/\s*[／/].*$/, ""))
+          .find(Boolean) ?? ""
+      );
+    }, [opened]);
+    const expectedArtists = (0, import_react.useMemo)(() => {
+      if (!opened) return [];
+      return getBangumiArtistNames();
+    }, [opened]);
     const { result, loading, error } = useNeteaseTracks({
-      query:
-        subject.name_cn && subject.name !== subject.name_cn
-          ? `${subject.name_cn} ${subject.name}`
-          : displayName,
+      query,
+      expectedAlbum: displayName,
+      trackTitle,
+      expectedArtists,
       mode,
       endpoint,
       albumEndpoint,
@@ -19438,9 +19646,15 @@
     (0, import_react.useEffect)(() => {
       if (!opened || !result || songs.length === 0) return;
       const bindings = [];
-      for (const row of findBangumiTrackRows()) {
-        const song = matchSong(getBangumiTrackTitle(row), songs);
-        const heading = row.querySelector("h6");
+      const rows = findBangumiTrackRows();
+      const rowMatches = matchRowsWithSongs(
+        rows,
+        songs,
+        result.mode,
+        expectedArtists,
+      );
+      for (const [index, song] of rowMatches.entries()) {
+        const heading = rows[index].querySelector("h6");
         if (!song || !heading) continue;
         const host = document.createElement("span");
         host.dataset.bangumiPlusTrackControl = "true";
@@ -19455,7 +19669,7 @@
         for (const binding of bindings) binding.host.remove();
         rowBindingStore.replace([]);
       };
-    }, [opened, result, rowBindingStore, songs]);
+    }, [expectedArtists, opened, result, rowBindingStore, songs]);
     (0, import_react.useEffect)(() => {
       const audio = audioRef.current;
       if (!audio) return;

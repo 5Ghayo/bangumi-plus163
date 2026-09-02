@@ -60,6 +60,18 @@ export function getBangumiTrackTitle(row: HTMLElement): string {
   return row.querySelector('h6 a')?.textContent?.trim() ?? '';
 }
 
+export function getBangumiArtistNames(documentRef: Document = document): string[] {
+  const artistRow = [...documentRef.querySelectorAll<HTMLElement>('#infobox li')].find((row) => {
+    const key = row.querySelector('.tip')?.textContent?.trim().replace(/[:：]\s*$/, '') ?? '';
+    return key === '艺术家' || key.startsWith('艺术家');
+  });
+  if (!artistRow) return [];
+
+  const value = artistRow.cloneNode(true) as HTMLElement;
+  value.querySelector('.tip')?.remove();
+  return [...new Set(value.textContent?.trim().split(/\s*(?:[、,，/／]|\n)\s*/).filter(Boolean) ?? [])];
+}
+
 export function createBangumiShadowMount(): {
   host: HTMLDivElement;
   root: HTMLDivElement;
