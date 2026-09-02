@@ -1,6 +1,6 @@
 import { createPortal } from 'react-dom';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { Check, ChevronUp, LoaderCircle, LogIn, Play, X } from 'lucide-react';
+import { Check, ChevronUp, LoaderCircle, LogIn, Minus, Play, Plus, X } from 'lucide-react';
 import TrackPreviewControl, { type AudioPlayerState } from './TrackPreviewControl';
 import { useNeteaseTracks } from '../hooks/useNeteaseTracks';
 import { findBangumiTrackRows, getBangumiTrackTitle } from '../integration/bangumiPage';
@@ -24,6 +24,11 @@ interface NeteaseAccountResponse {
   profile?: {
     userId?: number;
   } | null;
+  data?: {
+    profile?: {
+      userId?: number;
+    } | null;
+  };
 }
 
 interface RowBinding {
@@ -56,6 +61,18 @@ const EMPTY_PLAYER: AudioPlayerState = {
   error: null,
 };
 
+const VOLUME_STORAGE_KEY = 'bangumi-plus-music-volume';
+
+function readStoredVolume() {
+  try {
+    const value = Number(window.localStorage.getItem(VOLUME_STORAGE_KEY));
+    if (Number.isFinite(value)) return Math.min(1, Math.max(0, value));
+  } catch {
+    // localStorage may be unavailable in restrictive embeds; fall through.
+  }
+  return 0.75;
+}
+
 function normalizeTrackTitle(title: string) {
   return title
     .normalize('NFKC')
@@ -83,6 +100,7 @@ export default function MusicPreviewBar({ subject, endpoint, albumEndpoint, audi
   const [opened, setOpened] = useState(false);
   const [searchSession, setSearchSession] = useState(0);
   const [player, setPlayer] = useState<AudioPlayerState>(EMPTY_PLAYER);
+  const [volume, setVolume] = useState(readStoredVolume);
   const [accountStatus, setAccountStatus] = useState<'checking' | 'logged-in' | 'logged-out'>('checking');
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const requestControllerRef = useRef<AbortController | null>(null);
@@ -122,7 +140,8 @@ export default function MusicPreviewBar({ subject, endpoint, albumEndpoint, audi
       setAccountStatus('checking');
       try {
         const account = await requestJson<NeteaseAccountResponse>(accountEndpoint);
-        if (!cancelled) setAccountStatus(account.profile?.userId ? 'logged-in' : 'logged-out');
+        const profile = account.profile ?? account.data?.profile;
+        if (!cancelled) setAccountStatus(profile?.userId ? 'logged-in' : 'logged-out');
       } catch {
         // Treat an unavailable account endpoint as logged out so users can still log in.
         if (!cancelled) setAccountStatus('logged-out');
@@ -203,6 +222,15 @@ export default function MusicPreviewBar({ subject, endpoint, albumEndpoint, audi
     };
   }, []);
 
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.volume = volume;
+    try {
+      window.localStorage.setItem(VOLUME_STORAGE_KEY, volume.toString());
+    } catch {
+      // Saving is best-effort; playback still works with the in-memory value.
+    }
+  }, [volume]);
+
   useEffect(() => () => {
     requestControllerRef.current?.abort();
     audioRef.current?.pause();
@@ -274,6 +302,10 @@ export default function MusicPreviewBar({ subject, endpoint, albumEndpoint, audi
     setPlayer((current) => ({ ...current, currentTime: value }));
   };
 
+  const changeVolume = (delta: number) => {
+    setVolume((current) => Math.min(1, Math.max(0, Number((current + delta).toFixed(2)))));
+  };
+
   const open = () => {
     setSearchSession((current) => current + 1);
     setOpened(true);
@@ -316,6 +348,25 @@ export default function MusicPreviewBar({ subject, endpoint, albumEndpoint, audi
       </div>
       {opened && (
         <div className="music-preview__body">
+          <div className="music-preview__volume">
+            <button className="music-preview__volume-button" type="button" onClick={() => changeVolume(-0.05)} aria-label="减小音量" title="减小音量">
+              <Minus size={13} aria-hidden="true" />
+            </button>
+            <input
+              className="music-preview__volume-range"
+              type="range"
+              min="0"
+              max="1"
+              step="0.05"
+              value={volume}
+              onChange={(event) => setVolume(Number(event.target.value))}
+              aria-label="试听音量"
+            />
+            <button className="music-preview__volume-button" type="button" onClick={() => changeVolume(0.05)} aria-label="增大音量" title="增大音量">
+              <Plus size={13} aria-hidden="true" />
+            </button>
+            <span className="music-preview__volume-value">{Math.round(volume * 100)}%</span>
+          </div>
           {loading && <p className="music-preview__status"><LoaderCircle size={14} className="music-preview__spinner" aria-hidden="true" />正在匹配曲目...</p>}
           {!loading && error && <p className="music-preview__status music-preview__status--error">{error}</p>}
           {!loading && !error && result && songs.length === 0 && <p className="music-preview__status">没有找到匹配的{sourceLabel}曲目</p>}

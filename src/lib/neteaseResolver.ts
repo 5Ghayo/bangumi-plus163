@@ -12,6 +12,8 @@ interface SearchSong {
   dt?: number;
   artists?: Array<{ name?: string }>;
   album?: { id?: number; name?: string; picUrl?: string };
+  ar?: Array<{ name?: string }>;
+  al?: { id?: number; name?: string; picUrl?: string };
 }
 
 interface SearchResponse {
@@ -25,6 +27,9 @@ interface AlbumResponse {
     id?: number;
     name?: string;
     picUrl?: string;
+    songs?: SearchSong[];
+  };
+  resource?: {
     songs?: SearchSong[];
   };
 }
@@ -74,14 +79,15 @@ export async function resolveNeteaseAudioUrl({ songId, endpoint = '/api/netease/
 }
 
 function mapSong(song: SearchSong, album?: AlbumResponse['album']): NeteaseSong {
+  const songAlbum = song.album ?? song.al;
   return {
     id: song.id,
     name: song.name,
-    artist: (song.artists ?? []).map((artist) => artist.name).filter(Boolean).join(' / '),
+    artist: (song.artists ?? song.ar ?? []).map((artist) => artist.name).filter(Boolean).join(' / '),
     duration: song.duration ?? song.dt,
-    albumName: song.album?.name ?? album?.name,
-    albumId: song.album?.id ?? album?.id,
-    coverUrl: song.album?.picUrl ?? album?.picUrl,
+    albumName: songAlbum?.name ?? album?.name,
+    albumId: songAlbum?.id ?? album?.id,
+    coverUrl: songAlbum?.picUrl ?? album?.picUrl,
   };
 }
 
@@ -114,7 +120,8 @@ async function getAlbumSongs(albumId: number, endpoint: string, signal: AbortSig
   url.pathname = `${url.pathname.replace(/\/$/, '')}/${albumId}`;
   const data = await requestJson<AlbumResponse>(url, signal, requester);
   if (data.code !== undefined && data.code !== 200) throw new Error(`网易云专辑加载失败（${data.code}）`);
-  return (data.album?.songs ?? []).map((song) => mapSong(song, data.album));
+  const songs = data.album?.songs ?? data.resource?.songs ?? [];
+  return songs.map((song) => mapSong(song, data.album));
 }
 
 function normalize(value: string) {

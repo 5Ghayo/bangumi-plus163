@@ -108,6 +108,52 @@
   padding: 0 10px 10px;
 }
 
+.music-preview__volume {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 4px;
+  border-bottom: 1px solid var(--bangumi-plus-panel-border);
+  color: var(--bangumi-plus-panel-text);
+  font-size: 12px;
+}
+
+.music-preview__volume-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--bangumi-plus-panel-border);
+  border-radius: 3px;
+  background: var(--bangumi-plus-track-bg);
+  color: var(--bangumi-plus-panel-muted);
+  cursor: pointer;
+  transition: border-color .15s, color .15s, background .15s;
+}
+
+.music-preview__volume-button:hover {
+  border-color: #e28b4d;
+  background: var(--bangumi-plus-panel-hover);
+  color: #d97732;
+}
+
+.music-preview__volume-range {
+  flex: 1;
+  max-width: 220px;
+  height: 4px;
+  accent-color: #e28b4d;
+  cursor: pointer;
+}
+
+.music-preview__volume-value {
+  min-width: 36px;
+  color: var(--bangumi-plus-panel-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
 .music-preview__status {
   display: flex;
   align-items: center;

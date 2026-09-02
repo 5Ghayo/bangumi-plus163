@@ -18672,6 +18672,21 @@
    * This source code is licensed under the ISC license.
    * See the LICENSE file in the root directory of this source tree.
    */
+  var Minus = createLucideIcon("minus", [
+    [
+      "path",
+      {
+        d: "M5 12h14",
+        key: "1ays0h",
+      },
+    ],
+  ]);
+  /**
+   * @license lucide-react v1.34.0 - ISC
+   *
+   * This source code is licensed under the ISC license.
+   * See the LICENSE file in the root directory of this source tree.
+   */
   var Pause = createLucideIcon("pause", [
     [
       "rect",
@@ -18708,6 +18723,28 @@
       {
         d: "M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z",
         key: "10ikf1",
+      },
+    ],
+  ]);
+  /**
+   * @license lucide-react v1.34.0 - ISC
+   *
+   * This source code is licensed under the ISC license.
+   * See the LICENSE file in the root directory of this source tree.
+   */
+  var Plus = createLucideIcon("plus", [
+    [
+      "path",
+      {
+        d: "M5 12h14",
+        key: "1ays0h",
+      },
+    ],
+    [
+      "path",
+      {
+        d: "M12 5v14",
+        key: "s699le",
       },
     ],
   ]);
@@ -18899,17 +18936,18 @@
     return source.url.replace(/^http:/, "https:");
   }
   function mapSong(song, album) {
+    const songAlbum = song.album ?? song.al;
     return {
       id: song.id,
       name: song.name,
-      artist: (song.artists ?? [])
+      artist: (song.artists ?? song.ar ?? [])
         .map((artist) => artist.name)
         .filter(Boolean)
         .join(" / "),
       duration: song.duration ?? song.dt,
-      albumName: song.album?.name ?? album?.name,
-      albumId: song.album?.id ?? album?.id,
-      coverUrl: song.album?.picUrl ?? album?.picUrl,
+      albumName: songAlbum?.name ?? album?.name,
+      albumId: songAlbum?.id ?? album?.id,
+      coverUrl: songAlbum?.picUrl ?? album?.picUrl,
     };
   }
   function uniqueSongs(songs) {
@@ -18941,7 +18979,9 @@
     const data = await requestJson$1(url, signal, requester);
     if (data.code !== void 0 && data.code !== 200)
       throw new Error(`网易云专辑加载失败（${data.code}）`);
-    return (data.album?.songs ?? []).map((song) => mapSong(song, data.album));
+    return (data.album?.songs ?? data.resource?.songs ?? []).map((song) =>
+      mapSong(song, data.album),
+    );
   }
   function normalize(value) {
     return value
@@ -19275,6 +19315,14 @@
     duration: 0,
     error: null,
   };
+  var VOLUME_STORAGE_KEY = "bangumi-plus-music-volume";
+  function readStoredVolume() {
+    try {
+      const value = Number(window.localStorage.getItem(VOLUME_STORAGE_KEY));
+      if (Number.isFinite(value)) return Math.min(1, Math.max(0, value));
+    } catch {}
+    return 0.75;
+  }
   function normalizeTrackTitle(title) {
     return title
       .normalize("NFKC")
@@ -19322,6 +19370,7 @@
     const [opened, setOpened] = (0, import_react.useState)(false);
     const [searchSession, setSearchSession] = (0, import_react.useState)(0);
     const [player, setPlayer] = (0, import_react.useState)(EMPTY_PLAYER);
+    const [volume, setVolume] = (0, import_react.useState)(readStoredVolume);
     const [accountStatus, setAccountStatus] = (0, import_react.useState)(
       "checking",
     );
@@ -19367,10 +19416,9 @@
         setAccountStatus("checking");
         try {
           const account = await requestJson(accountEndpoint);
+          const profile = account.profile ?? account.data?.profile;
           if (!cancelled)
-            setAccountStatus(
-              account.profile?.userId ? "logged-in" : "logged-out",
-            );
+            setAccountStatus(profile?.userId ? "logged-in" : "logged-out");
         } catch {
           if (!cancelled) setAccountStatus("logged-out");
         }
@@ -19500,6 +19548,12 @@
         audio.removeEventListener("error", markError);
       };
     }, []);
+    (0, import_react.useEffect)(() => {
+      if (audioRef.current) audioRef.current.volume = volume;
+      try {
+        window.localStorage.setItem(VOLUME_STORAGE_KEY, volume.toString());
+      } catch {}
+    }, [volume]);
     (0, import_react.useEffect)(
       () => () => {
         requestControllerRef.current?.abort();
@@ -19602,6 +19656,11 @@
         ...current,
         currentTime: value,
       }));
+    };
+    const changeVolume = (delta) => {
+      setVolume((current) =>
+        Math.min(1, Math.max(0, Number((current + delta).toFixed(2)))),
+      );
     };
     const open = () => {
       setSearchSession((current) => current + 1);
@@ -19725,6 +19784,53 @@
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
             className: "music-preview__body",
             children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+                className: "music-preview__volume",
+                children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+                    className: "music-preview__volume-button",
+                    type: "button",
+                    onClick: () => changeVolume(-0.05),
+                    "aria-label": "减小音量",
+                    title: "减小音量",
+                    children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                      Minus,
+                      {
+                        size: 13,
+                        "aria-hidden": "true",
+                      },
+                    ),
+                  }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+                    className: "music-preview__volume-range",
+                    type: "range",
+                    min: "0",
+                    max: "1",
+                    step: "0.05",
+                    value: volume,
+                    onChange: (event) => setVolume(Number(event.target.value)),
+                    "aria-label": "试听音量",
+                  }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+                    className: "music-preview__volume-button",
+                    type: "button",
+                    onClick: () => changeVolume(0.05),
+                    "aria-label": "增大音量",
+                    title: "增大音量",
+                    children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                      Plus,
+                      {
+                        size: 13,
+                        "aria-hidden": "true",
+                      },
+                    ),
+                  }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
+                    className: "music-preview__volume-value",
+                    children: [Math.round(volume * 100), "%"],
+                  }),
+                ],
+              }),
               loading &&
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
                   className: "music-preview__status",
@@ -19792,7 +19898,7 @@
   //#endregion
   //#region src/App.css?inline
   var App_default =
-    ":root {\n  --bangumi-plus-panel-bg: #f5f5f5;\n  --bangumi-plus-panel-border: #ddd;\n  --bangumi-plus-panel-text: #777;\n  --bangumi-plus-panel-muted: #999;\n  --bangumi-plus-panel-hover: #fffaf6;\n  --bangumi-plus-track-bg: #fff;\n  --bangumi-plus-track-border: #d7d7d7;\n  --bangumi-plus-track-active-bg: #fff7ef;\n}\n\n:root[data-bangumi-plus-theme='dark'] {\n  --bangumi-plus-panel-bg: #282828;\n  --bangumi-plus-panel-border: #484848;\n  --bangumi-plus-panel-text: #c4c4c4;\n  --bangumi-plus-panel-muted: #9a9a9a;\n  --bangumi-plus-panel-hover: #382f29;\n  --bangumi-plus-track-bg: #333;\n  --bangumi-plus-track-border: #555;\n  --bangumi-plus-track-active-bg: #3a302a;\n}\n\n.music-preview {\n  margin: 0 0 10px;\n  border: 1px solid var(--bangumi-plus-panel-border);\n  border-radius: 5px;\n  background: var(--bangumi-plus-panel-bg);\n  overflow: hidden;\n}\n\n.music-preview__toolbar {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  min-height: 38px;\n}\n\n.music-preview__toolbar-actions {\n  display: inline-flex;\n  align-items: center;\n}\n\n.music-preview__toggle,\n.music-preview__login,\n.music-preview__close,\n.music-preview__collapse {\n  display: inline-flex;\n  align-items: center;\n  border: 0;\n  background: transparent;\n  color: #c96f31;\n  cursor: pointer;\n}\n\n.music-preview__login {\n  gap: 4px;\n  margin-left: 0;\n  padding: 5px 8px;\n  border: 1px solid var(--bangumi-plus-panel-border);\n  border-radius: 3px;\n  color: var(--bangumi-plus-panel-muted);\n  font-size: 11px;\n}\n\n.music-preview__login:hover {\n  border-color: #e28b4d;\n  background: var(--bangumi-plus-panel-hover);\n  color: #d97732;\n}\n\n.music-preview__login--active {\n  border-color: #73a97d;\n  color: #4f8a5a;\n}\n\n.music-preview__login--active:hover {\n  border-color: #4f8a5a;\n  color: #3c7448;\n}\n\n.music-preview__toggle {\n  gap: 7px;\n  padding: 9px 12px;\n  font-size: 13px;\n  font-weight: 600;\n}\n\n.music-preview__toggle:hover,\n.music-preview__close:hover,\n.music-preview__collapse:hover { color: #a9531c; }\n\n.music-preview__source {\n  color: var(--bangumi-plus-panel-muted);\n  font-size: 11px;\n  font-weight: 400;\n}\n\n.music-preview__close {\n  justify-content: center;\n  width: 34px;\n  height: 34px;\n  margin-right: 2px;\n  color: var(--bangumi-plus-panel-muted);\n}\n\n.music-preview__body {\n  border-top: 1px solid var(--bangumi-plus-panel-border);\n  padding: 0 10px 10px;\n}\n\n.music-preview__status {\n  display: flex;\n  align-items: center;\n  gap: 7px;\n  min-height: 38px;\n  padding: 0 4px;\n  color: var(--bangumi-plus-panel-text);\n  font-size: 12px;\n}\n\n.music-preview__status--error { color: #d9825b; }\n.music-preview__spinner { animation: bangumi-plus-spin 0.9s linear infinite; }\n\n@keyframes bangumi-plus-spin {\n  to { transform: rotate(360deg); }\n}\n";
+    ":root {\n  --bangumi-plus-panel-bg: #f5f5f5;\n  --bangumi-plus-panel-border: #ddd;\n  --bangumi-plus-panel-text: #777;\n  --bangumi-plus-panel-muted: #999;\n  --bangumi-plus-panel-hover: #fffaf6;\n  --bangumi-plus-track-bg: #fff;\n  --bangumi-plus-track-border: #d7d7d7;\n  --bangumi-plus-track-active-bg: #fff7ef;\n}\n\n:root[data-bangumi-plus-theme='dark'] {\n  --bangumi-plus-panel-bg: #282828;\n  --bangumi-plus-panel-border: #484848;\n  --bangumi-plus-panel-text: #c4c4c4;\n  --bangumi-plus-panel-muted: #9a9a9a;\n  --bangumi-plus-panel-hover: #382f29;\n  --bangumi-plus-track-bg: #333;\n  --bangumi-plus-track-border: #555;\n  --bangumi-plus-track-active-bg: #3a302a;\n}\n\n.music-preview {\n  margin: 0 0 10px;\n  border: 1px solid var(--bangumi-plus-panel-border);\n  border-radius: 5px;\n  background: var(--bangumi-plus-panel-bg);\n  overflow: hidden;\n}\n\n.music-preview__toolbar {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  min-height: 38px;\n}\n\n.music-preview__toolbar-actions {\n  display: inline-flex;\n  align-items: center;\n}\n\n.music-preview__toggle,\n.music-preview__login,\n.music-preview__close,\n.music-preview__collapse {\n  display: inline-flex;\n  align-items: center;\n  border: 0;\n  background: transparent;\n  color: #c96f31;\n  cursor: pointer;\n}\n\n.music-preview__login {\n  gap: 4px;\n  margin-left: 0;\n  padding: 5px 8px;\n  border: 1px solid var(--bangumi-plus-panel-border);\n  border-radius: 3px;\n  color: var(--bangumi-plus-panel-muted);\n  font-size: 11px;\n}\n\n.music-preview__login:hover {\n  border-color: #e28b4d;\n  background: var(--bangumi-plus-panel-hover);\n  color: #d97732;\n}\n\n.music-preview__login--active {\n  border-color: #73a97d;\n  color: #4f8a5a;\n}\n\n.music-preview__login--active:hover {\n  border-color: #4f8a5a;\n  color: #3c7448;\n}\n\n.music-preview__toggle {\n  gap: 7px;\n  padding: 9px 12px;\n  font-size: 13px;\n  font-weight: 600;\n}\n\n.music-preview__toggle:hover,\n.music-preview__close:hover,\n.music-preview__collapse:hover { color: #a9531c; }\n\n.music-preview__source {\n  color: var(--bangumi-plus-panel-muted);\n  font-size: 11px;\n  font-weight: 400;\n}\n\n.music-preview__close {\n  justify-content: center;\n  width: 34px;\n  height: 34px;\n  margin-right: 2px;\n  color: var(--bangumi-plus-panel-muted);\n}\n\n.music-preview__body {\n  border-top: 1px solid var(--bangumi-plus-panel-border);\n  padding: 0 10px 10px;\n}\n\n.music-preview__volume {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  min-height: 40px;\n  padding: 0 4px;\n  border-bottom: 1px solid var(--bangumi-plus-panel-border);\n  color: var(--bangumi-plus-panel-text);\n  font-size: 12px;\n}\n\n.music-preview__volume-button {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 24px;\n  height: 24px;\n  border: 1px solid var(--bangumi-plus-panel-border);\n  border-radius: 3px;\n  background: var(--bangumi-plus-track-bg);\n  color: var(--bangumi-plus-panel-muted);\n  cursor: pointer;\n  transition: border-color .15s, color .15s, background .15s;\n}\n\n.music-preview__volume-button:hover {\n  border-color: #e28b4d;\n  background: var(--bangumi-plus-panel-hover);\n  color: #d97732;\n}\n\n.music-preview__volume-range {\n  flex: 1;\n  max-width: 220px;\n  height: 4px;\n  accent-color: #e28b4d;\n  cursor: pointer;\n}\n\n.music-preview__volume-value {\n  min-width: 36px;\n  color: var(--bangumi-plus-panel-muted);\n  font-variant-numeric: tabular-nums;\n  text-align: right;\n}\n\n.music-preview__status {\n  display: flex;\n  align-items: center;\n  gap: 7px;\n  min-height: 38px;\n  padding: 0 4px;\n  color: var(--bangumi-plus-panel-text);\n  font-size: 12px;\n}\n\n.music-preview__status--error { color: #d9825b; }\n.music-preview__spinner { animation: bangumi-plus-spin 0.9s linear infinite; }\n\n@keyframes bangumi-plus-spin {\n  to { transform: rotate(360deg); }\n}\n";
   //#endregion
   //#region src/lib/gdstudioResolver.ts
   var GD_API_BASE = "https://music-api.gdstudio.xyz/api.php";

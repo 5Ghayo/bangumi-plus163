@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Bangumi Plus 音乐试听
+// @name         Bangumi Plus 音乐试听（BGM 本地 NCM 版）
 // @namespace    https://github.com/bangumi/Archive
 // @version      1.0.0
-// @description  在 Bangumi 音乐条目页内嵌网易云音乐试听和曲目列表
+// @description  在 Bangumi 音乐条目页内嵌本地部署 NCM API 的网易云试听列表
 // @match        https://bgm.tv/subject/*
 // @match        http://bgm.tv/subject/*
 // @match        https://bgm.tv/*
@@ -27,10 +27,10 @@
 // @match        http://www.chii.in/*
 // @run-at       document-idle
 // @noframes
-// @grant        GM_xmlhttpRequest
-// @connect      api.bgm.tv
-// @connect      music.163.com
+// @grant        none
 // ==/UserScript==
+
+// 此版本使用本机部署的 NeteaseCloudMusicApi，搜索与音源请求由本地服务器转发。
 (function () {
   //#region \0rolldown/runtime.js
   var __commonJSMin = (cb, mod) => () => (
@@ -19900,69 +19900,133 @@
   var App_default =
     ":root {\n  --bangumi-plus-panel-bg: #f5f5f5;\n  --bangumi-plus-panel-border: #ddd;\n  --bangumi-plus-panel-text: #777;\n  --bangumi-plus-panel-muted: #999;\n  --bangumi-plus-panel-hover: #fffaf6;\n  --bangumi-plus-track-bg: #fff;\n  --bangumi-plus-track-border: #d7d7d7;\n  --bangumi-plus-track-active-bg: #fff7ef;\n}\n\n:root[data-bangumi-plus-theme='dark'] {\n  --bangumi-plus-panel-bg: #282828;\n  --bangumi-plus-panel-border: #484848;\n  --bangumi-plus-panel-text: #c4c4c4;\n  --bangumi-plus-panel-muted: #9a9a9a;\n  --bangumi-plus-panel-hover: #382f29;\n  --bangumi-plus-track-bg: #333;\n  --bangumi-plus-track-border: #555;\n  --bangumi-plus-track-active-bg: #3a302a;\n}\n\n.music-preview {\n  margin: 0 0 10px;\n  border: 1px solid var(--bangumi-plus-panel-border);\n  border-radius: 5px;\n  background: var(--bangumi-plus-panel-bg);\n  overflow: hidden;\n}\n\n.music-preview__toolbar {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  min-height: 38px;\n}\n\n.music-preview__toolbar-actions {\n  display: inline-flex;\n  align-items: center;\n}\n\n.music-preview__toggle,\n.music-preview__login,\n.music-preview__close,\n.music-preview__collapse {\n  display: inline-flex;\n  align-items: center;\n  border: 0;\n  background: transparent;\n  color: #c96f31;\n  cursor: pointer;\n}\n\n.music-preview__login {\n  gap: 4px;\n  margin-left: 0;\n  padding: 5px 8px;\n  border: 1px solid var(--bangumi-plus-panel-border);\n  border-radius: 3px;\n  color: var(--bangumi-plus-panel-muted);\n  font-size: 11px;\n}\n\n.music-preview__login:hover {\n  border-color: #e28b4d;\n  background: var(--bangumi-plus-panel-hover);\n  color: #d97732;\n}\n\n.music-preview__login--active {\n  border-color: #73a97d;\n  color: #4f8a5a;\n}\n\n.music-preview__login--active:hover {\n  border-color: #4f8a5a;\n  color: #3c7448;\n}\n\n.music-preview__toggle {\n  gap: 7px;\n  padding: 9px 12px;\n  font-size: 13px;\n  font-weight: 600;\n}\n\n.music-preview__toggle:hover,\n.music-preview__close:hover,\n.music-preview__collapse:hover { color: #a9531c; }\n\n.music-preview__source {\n  color: var(--bangumi-plus-panel-muted);\n  font-size: 11px;\n  font-weight: 400;\n}\n\n.music-preview__close {\n  justify-content: center;\n  width: 34px;\n  height: 34px;\n  margin-right: 2px;\n  color: var(--bangumi-plus-panel-muted);\n}\n\n.music-preview__body {\n  border-top: 1px solid var(--bangumi-plus-panel-border);\n  padding: 0 10px 10px;\n}\n\n.music-preview__volume {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  min-height: 40px;\n  padding: 0 4px;\n  border-bottom: 1px solid var(--bangumi-plus-panel-border);\n  color: var(--bangumi-plus-panel-text);\n  font-size: 12px;\n}\n\n.music-preview__volume-button {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 24px;\n  height: 24px;\n  border: 1px solid var(--bangumi-plus-panel-border);\n  border-radius: 3px;\n  background: var(--bangumi-plus-track-bg);\n  color: var(--bangumi-plus-panel-muted);\n  cursor: pointer;\n  transition: border-color .15s, color .15s, background .15s;\n}\n\n.music-preview__volume-button:hover {\n  border-color: #e28b4d;\n  background: var(--bangumi-plus-panel-hover);\n  color: #d97732;\n}\n\n.music-preview__volume-range {\n  flex: 1;\n  max-width: 220px;\n  height: 4px;\n  accent-color: #e28b4d;\n  cursor: pointer;\n}\n\n.music-preview__volume-value {\n  min-width: 36px;\n  color: var(--bangumi-plus-panel-muted);\n  font-variant-numeric: tabular-nums;\n  text-align: right;\n}\n\n.music-preview__status {\n  display: flex;\n  align-items: center;\n  gap: 7px;\n  min-height: 38px;\n  padding: 0 4px;\n  color: var(--bangumi-plus-panel-text);\n  font-size: 12px;\n}\n\n.music-preview__status--error { color: #d9825b; }\n.music-preview__spinner { animation: bangumi-plus-spin 0.9s linear infinite; }\n\n@keyframes bangumi-plus-spin {\n  to { transform: rotate(360deg); }\n}\n";
   //#endregion
-  //#region src/userscript.tsx
+  //#region src/lib/localNcmResolver.ts
+  var DEFAULT_LOCAL_NCM_BASE = "http://127.0.0.1:3000";
+  function normalizeBaseUrl(value) {
+    const trimmed = value.trim().replace(/\/$/, "");
+    if (!trimmed) return DEFAULT_LOCAL_NCM_BASE;
+    if (!/^https?:\/\//.test(trimmed)) return `http://${trimmed}`;
+    return trimmed;
+  }
+  function joinLocalUrl(baseUrl, pathname, params) {
+    const url = new URL(pathname, `${normalizeBaseUrl(baseUrl)}/`);
+    url.search = params.toString();
+    return url;
+  }
+  async function requestLocalNcm(url, signal) {
+    let response;
+    try {
+      response = await fetch(url, {
+        signal,
+        headers: { Accept: "application/json" },
+      });
+    } catch (reason) {
+      if (reason instanceof DOMException && reason.name === "AbortError")
+        throw reason;
+      throw new Error("无法连接本地 NCM API，请确认服务器已启动并允许跨域访问");
+    }
+    if (!response.ok)
+      throw new Error(`本地 NCM API 请求失败（HTTP ${response.status}）`);
+    const data = await response.json();
+    if (data.code !== void 0 && data.code !== 200)
+      throw new Error(`本地 NCM API 请求失败（${data.code}）`);
+    return data;
+  }
+  function parseSongIds(rawIds) {
+    if (!rawIds) return [];
+    try {
+      const value = JSON.parse(rawIds);
+      return (Array.isArray(value) ? value : [value])
+        .map((item) =>
+          typeof item === "number"
+            ? item
+            : typeof item === "string"
+              ? Number.parseInt(item, 10)
+              : NaN,
+        )
+        .filter((item) => Number.isFinite(item));
+    } catch {
+      return [];
+    }
+  }
+  /**
+   * 本地部署 NeteaseCloudMusicApi 后，浏览器可以直接请求 localhost 服务。
+   * 这里保留共享解析器的旧网易云请求形状，再把它翻译成本地 API 的路由。
+   */
+  function createLocalNcmRequester({ baseUrl = DEFAULT_LOCAL_NCM_BASE } = {}) {
+    return async (url, signal) => {
+      const parsed = new URL(url, window.location.origin);
+      if (parsed.pathname.includes("/api/search/get/web"))
+        return await requestLocalNcm(
+          joinLocalUrl(
+            baseUrl,
+            "cloudsearch",
+            new URLSearchParams({
+              keywords: parsed.searchParams.get("s") ?? "",
+              type: "1",
+              offset: parsed.searchParams.get("offset") ?? "0",
+              total: "true",
+              limit: parsed.searchParams.get("limit") ?? "100",
+            }),
+          ),
+          signal,
+        );
+      if (parsed.pathname.includes("/api/album")) {
+        const albumId = parsed.pathname.match(/\/api\/album\/(\d+)$/)?.[1];
+        if (!albumId) throw new Error("本地 NCM API 无法解析专辑请求");
+        return await requestLocalNcm(
+          joinLocalUrl(baseUrl, "album", new URLSearchParams({ id: albumId })),
+          signal,
+        );
+      }
+      if (parsed.pathname.includes("/api/song/enhance/player/url/v1")) {
+        const [songId] = parseSongIds(parsed.searchParams.get("ids"));
+        if (!Number.isFinite(songId))
+          throw new Error("本地 NCM API 无法解析音频请求");
+        return await requestLocalNcm(
+          joinLocalUrl(
+            baseUrl,
+            "song/url/v1",
+            new URLSearchParams({
+              id: String(songId),
+              level: "standard",
+              encodeType: "mp3",
+            }),
+          ),
+          signal,
+        );
+      }
+      if (parsed.pathname.includes("/api/nuser/account/get"))
+        return await requestLocalNcm(
+          joinLocalUrl(baseUrl, "login/status", new URLSearchParams()),
+          signal,
+        );
+      throw new Error(`本地 NCM API 不支持该请求：${parsed.pathname}`);
+    };
+  }
+  //#endregion
+  //#region src/bgm-local.tsx
+  var LOCAL_API_BASE = "http://127.0.0.1:3000";
   var NETEASE_SEARCH_ENDPOINT = "https://music.163.com/api/search/get/web";
   var NETEASE_ALBUM_ENDPOINT = "https://music.163.com/api/album";
   var NETEASE_AUDIO_ENDPOINT =
     "https://music.163.com/api/song/enhance/player/url/v1";
   var NETEASE_ACCOUNT_ENDPOINT = "https://music.163.com/api/nuser/account/get";
-  var USER_AGENT = "bangumi-plus/1.0.0 (https://github.com/bangumi/Archive)";
-  var requestJson = (url, signal) =>
-    new Promise((resolve, reject) => {
-      let settled = false;
-      const finish = (callback) => {
-        if (settled) return;
-        settled = true;
-        callback();
-      };
-      const request = GM_xmlhttpRequest({
-        method: "GET",
-        url,
-        headers: {
-          "User-Agent": USER_AGENT,
-          Accept: "application/json",
-        },
-        anonymous: false,
-        timeout: 15e3,
-        onload: (response) =>
-          finish(() => {
-            if (response.status < 200 || response.status >= 300) {
-              reject(
-                /* @__PURE__ */ new Error(
-                  `请求失败（HTTP ${response.status}）`,
-                ),
-              );
-              return;
-            }
-            try {
-              resolve(JSON.parse(response.responseText));
-            } catch {
-              reject(/* @__PURE__ */ new Error("请求返回了无效 JSON"));
-            }
-          }),
-        onerror: () =>
-          finish(() => reject(/* @__PURE__ */ new Error("网络请求失败"))),
-        ontimeout: () =>
-          finish(() => reject(/* @__PURE__ */ new Error("网络请求超时"))),
-        onabort: () =>
-          finish(() => reject(new DOMException("请求已取消", "AbortError"))),
-      });
-      signal?.addEventListener(
-        "abort",
-        () => {
-          request.abort();
-          finish(() => reject(new DOMException("请求已取消", "AbortError")));
-        },
-        { once: true },
-      );
-    });
+  function getLocalApiBase() {
+    return window.__BANGUMI_PLUS_LOCAL_API__?.trim() || LOCAL_API_BASE;
+  }
+  var requestJson = createLocalNcmRequester({ baseUrl: getLocalApiBase() });
   function appendStyles() {
     document.head
       .querySelector("[data-bangumi-plus-userscript-style]")
       ?.remove();
     const style = document.createElement("style");
     style.dataset.bangumiPlusUserscriptStyle = "true";
-    style.textContent = `${App_default}\n#bangumi-plus-root { max-width: none; margin: 0; padding: 0; }`;
+    style.textContent = [
+      App_default,
+      "#bangumi-plus-root { max-width: none; margin: 0; padding: 0; }",
+      ".music-preview__login { display: none !important; }",
+    ].join("\n");
     document.head.append(style);
   }
   function parseRgbLuminance(color) {
@@ -20060,16 +20124,18 @@
     if (!subjectId) return;
     if (!isMusicSubjectPage()) {
       console.info(
-        "[bangumi-plus] not a music subject, skipped",
+        "[bangumi-plus/bgm-local] not a music subject, skipped",
         location.pathname,
       );
       return;
     }
     try {
       await waitForTrackList();
-      const mount = createBangumiTrackListShadowMount();
+      const mount = createBangumiTrackListShadowMount({
+        launcherLabel: "试听",
+      });
       if (!mount) {
-        console.info("[bangumi-plus] mount skipped", {
+        console.info("[bangumi-plus/bgm-local] mount skipped", {
           host: location.hostname,
           path: location.pathname,
           heading: Boolean(findBangumiTrackListMountPoint()),
@@ -20088,6 +20154,7 @@
           audioEndpoint: NETEASE_AUDIO_ENDPOINT,
           accountEndpoint: NETEASE_ACCOUNT_ENDPOINT,
           requestJson,
+          sourceLabel: "本地 NCM",
         }),
       );
       window.setTimeout(() => {
@@ -20099,12 +20166,12 @@
         mount.launcher.remove();
         mount.root.style.display = "block";
       }, 100);
-      console.info("[bangumi-plus] preview button mounted");
+      console.info("[bangumi-plus/bgm-local] preview button mounted");
     } catch (error) {
-      console.warn("[bangumi-plus] 音乐播放器加载失败", error);
+      console.warn("[bangumi-plus/bgm-local] 音乐播放器加载失败", error);
     }
   }
-  console.info("[bangumi-plus] userscript started", location.href);
+  console.info("[bangumi-plus/bgm-local] component started", location.href);
   mount();
   //#endregion
 })();
