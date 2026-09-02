@@ -19457,7 +19457,7 @@
     error: null,
   };
   var VOLUME_STORAGE_KEY = "bangumi-plus-music-volume";
-  var ALBUM_AUTO_FILL_MIN_MATCHES = 2;
+  var ALBUM_AUTO_FILL_MIN_MATCHES = 3;
   function readStoredVolume() {
     try {
       const value = Number(window.localStorage.getItem(VOLUME_STORAGE_KEY));

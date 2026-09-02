@@ -62,7 +62,7 @@ const EMPTY_PLAYER: AudioPlayerState = {
 };
 
 const VOLUME_STORAGE_KEY = 'bangumi-plus-music-volume';
-const ALBUM_AUTO_FILL_MIN_MATCHES = 2;
+const ALBUM_AUTO_FILL_MIN_MATCHES = 3;
 
 function readStoredVolume() {
   try {
