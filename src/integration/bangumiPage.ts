@@ -44,15 +44,18 @@ export function findBangumiTrackListMountPoint(): HTMLElement | null {
     ?? findBangumiMountPoint();
 }
 
+export function findBangumiTrackListElements(): HTMLUListElement[] {
+  return [...document.querySelectorAll<HTMLUListElement>(
+    'ul.line_list_music, ul.line_list.line_list_music, ul[class*="line_list_music"]',
+  )];
+}
+
 export function findBangumiTrackListElement(): HTMLUListElement | null {
-  return document.querySelector<HTMLUListElement>('ul.line_list_music, ul.line_list.line_list_music, ul[class*="line_list_music"]');
+  return findBangumiTrackListElements()[0] ?? null;
 }
 
 export function findBangumiTrackRows(): HTMLElement[] {
-  const trackList = findBangumiTrackListElement();
-  if (!trackList) return [];
-
-  return [...trackList.querySelectorAll<HTMLElement>(':scope > li')]
+  return findBangumiTrackListElements().flatMap((trackList) => [...trackList.querySelectorAll<HTMLElement>(':scope > li')])
     .filter((row) => row.querySelector('h6 a'));
 }
 

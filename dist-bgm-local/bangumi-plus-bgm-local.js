@@ -18906,6 +18906,95 @@
     });
   }
   //#endregion
+  //#region src/lib/titleMatch.ts
+  var WHITESPACE = /\s+/g;
+  var DASHES = /[-‐‑‒–—―]/g;
+  var PUNCTUATION_AND_SYMBOLS = /[\p{P}\p{S}]/gu;
+  var SIMILAR_TITLE_THRESHOLD = 0.78;
+  function prepareTitle(value) {
+    const normalized = value
+      .normalize("NFKC")
+      .replace(DASHES, " ")
+      .replace(PUNCTUATION_AND_SYMBOLS, " ")
+      .trim()
+      .toLocaleLowerCase();
+    return {
+      compact: normalized.replace(WHITESPACE, ""),
+      tokens: normalized.split(WHITESPACE).filter((token) => token.length > 1),
+    };
+  }
+  function levenshteinDistance(left, right) {
+    if (left === right) return 0;
+    if (!left) return right.length;
+    if (!right) return left.length;
+    let previousRow = Array.from(
+      { length: right.length + 1 },
+      (_, index) => index,
+    );
+    for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+      const currentRow = [leftIndex];
+      const leftCharacter = left[leftIndex - 1];
+      for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+        const substitutionCost =
+          leftCharacter === right[rightIndex - 1] ? 0 : 1;
+        currentRow[rightIndex] = Math.min(
+          previousRow[rightIndex] + 1,
+          currentRow[rightIndex - 1] + 1,
+          previousRow[rightIndex - 1] + substitutionCost,
+        );
+      }
+      previousRow = currentRow;
+    }
+    return previousRow[right.length];
+  }
+  function tokenOverlapScore(left, right) {
+    if (!left.tokens.length || !right.tokens.length) return 0;
+    const rightTokens = new Set(right.tokens);
+    const [shorter, longer] =
+      left.tokens.length <= right.tokens.length
+        ? [left.tokens, right.tokens]
+        : [right.tokens, left.tokens];
+    const shared = shorter.filter((token) => rightTokens.has(token)).length;
+    if (!shared) return 0;
+    if (shared === shorter.length)
+      return 0.82 + 0.12 * (shorter.length / longer.length);
+    return (shared * 2) / (left.tokens.length + right.tokens.length);
+  }
+  function textSimilarity(expected, actual) {
+    const left = prepareTitle(expected);
+    const right = prepareTitle(actual);
+    if (!left.compact || !right.compact) return 0;
+    if (left.compact === right.compact) return 1;
+    const containment =
+      left.compact.includes(right.compact) ||
+      right.compact.includes(left.compact)
+        ? 0.72 +
+          0.22 *
+            (Math.min(left.compact.length, right.compact.length) /
+              Math.max(left.compact.length, right.compact.length))
+        : 0;
+    const lengthSimilarity =
+      1 -
+      levenshteinDistance(left.compact, right.compact) /
+        Math.max(left.compact.length, right.compact.length);
+    return Math.max(
+      0,
+      Math.min(
+        1,
+        Math.max(containment, lengthSimilarity, tokenOverlapScore(left, right)),
+      ),
+    );
+  }
+  function cleanTrackTitle(title) {
+    return (
+      title
+        ?.trim()
+        .replace(/^\s*\d+\s*[.、:：)）-]?\s*/, "")
+        .replace(/\s*[／/].*$/, "")
+        .trim() ?? ""
+    );
+  }
+  //#endregion
   //#region src/lib/neteaseResolver.ts
   async function resolveNeteaseAudioUrl({
     songId,
@@ -19024,14 +19113,24 @@
         );
       }, 0);
   }
-  function getSearchQueries(query, trackTitle) {
+  function getSearchQueries(query, trackTitles) {
     const trimmed = query.trim();
-    const track = trackTitle?.trim();
-    const trackWithAlbum = track ? `${track} ${trimmed}` : "";
+    const anchors = trackTitles
+      .slice(0, 3)
+      .map(cleanTrackTitle)
+      .filter(Boolean);
+    const trackWithAlbumQueries = anchors.map((track) => `${track} ${trimmed}`);
     const tokens = trimmed.split(/\s+/).filter((token) => token.length > 1);
-    return [.../* @__PURE__ */ new Set([trackWithAlbum, trimmed, ...tokens])]
+    return [
+      .../* @__PURE__ */ new Set([
+        ...trackWithAlbumQueries,
+        trimmed,
+        ...anchors,
+        ...tokens,
+      ]),
+    ]
       .filter(Boolean)
-      .slice(0, 4);
+      .slice(0, 7);
   }
   function albumNameMatches(albumName, expectedAlbum) {
     if (!expectedAlbum.trim()) return true;
@@ -19049,19 +19148,20 @@
       .split(/\s+/)
       .map(normalize)
       .filter((token) => token.length > 1);
-    return expectedAlbum
+    const expectedTokens = expectedAlbum
       .split(/\s+/)
       .map(normalize)
-      .filter((token) => token.length > 1)
-      .some((expectedToken) =>
-        albumTokens.some((albumToken) => {
-          return (
-            albumToken === expectedToken ||
-            albumToken.includes(expectedToken) ||
-            expectedToken.includes(albumToken)
-          );
-        }),
-      );
+      .filter((token) => token.length > 1);
+    if (textSimilarity(albumName, expectedAlbum) >= 0.82) return true;
+    return expectedTokens.some((expectedToken) =>
+      albumTokens.some((albumToken) => {
+        return (
+          albumToken === expectedToken ||
+          albumToken.includes(expectedToken) ||
+          expectedToken.includes(albumToken)
+        );
+      }),
+    );
   }
   function chooseAlbumCandidates(songs, query, expectedArtists) {
     const queryValue = normalize(query);
@@ -19096,45 +19196,109 @@
       return score(b) - score(a);
     });
   }
-  function chooseSingleSong(songs, trackTitle, expectedAlbum, expectedArtists) {
-    const normalizedTrack = normalize(trackTitle ?? "");
+  function albumMatchScore(song, expectedAlbum) {
     const normalizedAlbum = normalize(expectedAlbum ?? "");
+    if (!normalizedAlbum || !song.albumName || !expectedAlbum) return 0;
+    const album = normalize(song.albumName);
+    if (album === normalizedAlbum) return 400;
+    if (album.includes(normalizedAlbum) || normalizedAlbum.includes(album))
+      return 300;
+    if (textSimilarity(expectedAlbum, song.albumName) >= 0.82) return 250;
+    return 0;
+  }
+  function isTrackTitleMatch(expectedTitle, songTitle) {
+    const expected = cleanTrackTitle(expectedTitle);
+    if (!expected || !songTitle.trim()) return false;
+    return textSimilarity(expected, songTitle) >= SIMILAR_TITLE_THRESHOLD;
+  }
+  function countAlbumMatches(collection, expectedTracks, expectedArtists) {
+    const usedSongIds = /* @__PURE__ */ new Set();
+    let matchedCount = 0;
+    for (const expectedTitle of expectedTracks) {
+      const song = getFirstMatchCandidates(
+        collection.filter((song) => !usedSongIds.has(song.id)),
+        expectedTitle,
+        collection[0]?.albumName,
+        expectedArtists,
+      )[0];
+      if (!song || !isTrackTitleMatch(expectedTitle, song.name)) continue;
+      usedSongIds.add(song.id);
+      matchedCount += 1;
+    }
+    return matchedCount;
+  }
+  function getRequiredAlbumMatchCount(expectedTracks) {
+    return Math.min(3, expectedTracks.length);
+  }
+  function getAlbumAnchorCandidates(
+    songs,
+    expectedTracks,
+    expectedAlbum,
+    expectedArtists,
+  ) {
+    const anchors = [];
+    const seenSongIds = /* @__PURE__ */ new Set();
+    for (const trackTitle of expectedTracks.slice(0, 4))
+      for (const song of getFirstMatchCandidates(
+        songs,
+        trackTitle,
+        expectedAlbum,
+        expectedArtists,
+      ).slice(0, 2)) {
+        if (!song.albumId || seenSongIds.has(song.id)) continue;
+        seenSongIds.add(song.id);
+        anchors.push(song);
+      }
+    return anchors;
+  }
+  function chooseSingleSong(songs, trackTitle, expectedAlbum, expectedArtists) {
+    return (
+      getFirstMatchCandidates(
+        songs,
+        trackTitle,
+        expectedAlbum,
+        expectedArtists,
+      )[0] ?? songs[0]
+    );
+  }
+  function getFirstMatchCandidates(
+    songs,
+    trackTitle,
+    expectedAlbum,
+    expectedArtists,
+  ) {
+    const expectedTitle = cleanTrackTitle(trackTitle);
     const candidates = songs.map((song, index) => {
-      const title = normalize(song.name);
-      const titleScore = !normalizedTrack
-        ? 0
-        : title === normalizedTrack
-          ? 1e3
-          : title.includes(normalizedTrack) || normalizedTrack.includes(title)
-            ? 700 - Math.abs(title.length - normalizedTrack.length)
-            : 0;
-      const albumScore =
-        normalizedAlbum &&
-        song.albumName &&
-        normalize(song.albumName).includes(normalizedAlbum)
-          ? 300
-          : 0;
+      const titleSimilarity = expectedTitle
+        ? textSimilarity(expectedTitle, song.name)
+        : 0;
+      const titleScore = titleSimilarity * 1e3;
+      const albumScore = albumMatchScore(song, expectedAlbum);
       const artistScore = artistOverlapScore$1(song, expectedArtists) * 500;
       return {
         song,
         titleScore,
+        titleSimilarity,
         score: titleScore + albumScore + artistScore - index / songs.length,
       };
     });
-    const exactCandidates = normalizedTrack
-      ? candidates.filter(({ titleScore }) => titleScore === 1e3)
-      : [];
-    return (
-      [...(exactCandidates.length > 0 ? exactCandidates : candidates)].sort(
-        (a, b) => b.score - a.score,
-      )[0]?.song ?? songs[0]
-    );
-  }
-  function titleMatches(songName, trackTitle) {
-    const title = normalize(trackTitle ?? "");
-    const name = normalize(songName);
-    if (!title || !name) return false;
-    return name === title || name.includes(title) || title.includes(name);
+    const exactCandidates = expectedTitle
+      ? candidates.filter(({ titleSimilarity }) => titleSimilarity >= 0.999)
+      : candidates;
+    const similarCandidates = expectedTitle
+      ? candidates.filter(
+          ({ titleSimilarity }) => titleSimilarity >= SIMILAR_TITLE_THRESHOLD,
+        )
+      : candidates;
+    return [
+      ...(exactCandidates.length > 0
+        ? exactCandidates
+        : similarCandidates.length > 0
+          ? similarCandidates
+          : candidates),
+    ]
+      .sort((a, b) => b.score - a.score)
+      .map(({ song }) => song);
   }
   async function loadMatchingAlbum(
     candidates,
@@ -19142,6 +19306,9 @@
     endpoint,
     signal,
     requester,
+    expectedTracks = [],
+    expectedArtists,
+    expectedTrackCount,
   ) {
     const matchingCandidates = expectedAlbum.trim()
       ? candidates.filter((candidate) =>
@@ -19158,10 +19325,22 @@
           requester,
         );
         if (
-          complete.length > 0 &&
-          albumNameMatches(complete[0].albumName, expectedAlbum)
+          !complete.length ||
+          !albumNameMatches(complete[0].albumName, expectedAlbum)
         )
-          return complete;
+          continue;
+        if (
+          expectedTrackCount &&
+          Math.abs(complete.length - expectedTrackCount) > 1
+        )
+          continue;
+        if (
+          expectedTracks.length &&
+          countAlbumMatches(complete, expectedTracks, expectedArtists) <
+            getRequiredAlbumMatchCount(expectedTracks)
+        )
+          continue;
+        return complete;
       } catch (reason) {
         if (reason instanceof DOMException && reason.name === "AbortError")
           throw reason;
@@ -19169,7 +19348,7 @@
     }
     return null;
   }
-  async function loadAlbumForFirstMatch(song, endpoint, signal, requester) {
+  async function loadAlbumForAnchor(song, endpoint, signal, requester) {
     if (!song.albumId) return null;
     const complete = await getAlbumSongs(
       song.albumId,
@@ -19177,13 +19356,84 @@
       signal,
       requester,
     );
-    return complete.some((track) => track.id === song.id) ? complete : null;
+    if (!complete.some((track) => track.id === song.id)) return null;
+    return complete;
+  }
+  async function loadAlbumUsingTrackAnchors({
+    songs,
+    expectedAlbum,
+    expectedTracks,
+    expectedArtists,
+    expectedTrackCount,
+    endpoint,
+    signal,
+    requester,
+  }) {
+    const anchorCandidates = getAlbumAnchorCandidates(
+      songs,
+      expectedTracks,
+      expectedAlbum,
+      expectedArtists,
+    );
+    const requiredMatches = getRequiredAlbumMatchCount(expectedTracks);
+    const triedAlbumIds = /* @__PURE__ */ new Set();
+    let fallback = null;
+    for (const anchor of anchorCandidates) {
+      if (anchor.albumId === void 0) continue;
+      if (triedAlbumIds.has(anchor.albumId)) continue;
+      triedAlbumIds.add(anchor.albumId);
+      try {
+        const collection = await loadAlbumForAnchor(
+          anchor,
+          endpoint,
+          signal,
+          requester,
+        );
+        if (!collection || collection.length <= 1) continue;
+        const matchedCount = countAlbumMatches(
+          collection,
+          expectedTracks,
+          expectedArtists,
+        );
+        const countDelta = expectedTrackCount
+          ? Math.abs(collection.length - expectedTrackCount)
+          : 0;
+        if (
+          matchedCount >= requiredMatches &&
+          (!expectedTrackCount || countDelta <= 1)
+        )
+          return {
+            mode: "album",
+            songs: collection,
+            albumName: collection[0].albumName,
+            albumId: collection[0].albumId,
+          };
+        const score = matchedCount * 100 - countDelta;
+        if (!fallback || score > fallback.score)
+          fallback = {
+            collection,
+            score,
+          };
+      } catch (reason) {
+        if (reason instanceof DOMException && reason.name === "AbortError")
+          throw reason;
+      }
+    }
+    if (!fallback) return null;
+    return {
+      mode: "album",
+      songs: fallback.collection,
+      albumName: fallback.collection[0].albumName,
+      albumId: fallback.collection[0].albumId,
+    };
   }
   async function resolveNeteaseTracks({
     query,
     expectedAlbum,
     trackTitle,
+    expectedTracks: expectedTrackList,
     expectedArtists,
+    expectedTrackCount,
     autoFillAlbumOnFirstMatch = false,
     mode = "auto",
     endpoint = "/api/netease/search/get/web",
@@ -19191,8 +19441,13 @@
     signal,
     requestJson: requester,
   }) {
+    const expectedTracks = expectedTrackList?.length
+      ? expectedTrackList
+      : trackTitle
+        ? [trackTitle]
+        : [];
     const results = await Promise.allSettled(
-      getSearchQueries(query, trackTitle).map((searchQuery) =>
+      getSearchQueries(query, expectedTracks).map((searchQuery) =>
         searchSongs(searchQuery, endpoint, signal, requester),
       ),
     );
@@ -19221,31 +19476,17 @@
         ],
       };
     if (autoFillAlbumOnFirstMatch) {
-      const firstMatch = chooseSingleSong(
+      const anchoredAlbum = await loadAlbumUsingTrackAnchors({
         songs,
-        trackTitle,
         expectedAlbum,
+        expectedTracks,
         expectedArtists,
-      );
-      if (titleMatches(firstMatch.name, trackTitle))
-        try {
-          const collection = await loadAlbumForFirstMatch(
-            firstMatch,
-            albumEndpoint,
-            signal,
-            requester,
-          );
-          if (collection?.length)
-            return {
-              mode: "album",
-              songs: collection,
-              albumName: collection[0].albumName,
-              albumId: collection[0].albumId,
-            };
-        } catch (reason) {
-          if (reason instanceof DOMException && reason.name === "AbortError")
-            throw reason;
-        }
+        expectedTrackCount,
+        endpoint: albumEndpoint,
+        signal,
+        requester,
+      });
+      if (anchoredAlbum) return anchoredAlbum;
     }
     const collection = await loadMatchingAlbum(
       chooseAlbumCandidates(songs, query, expectedArtists),
@@ -19253,6 +19494,9 @@
       albumEndpoint,
       signal,
       requester,
+      expectedTracks,
+      expectedArtists,
+      expectedTrackCount,
     );
     const resolved = collection?.length
       ? collection
@@ -19270,7 +19514,9 @@
     query,
     expectedAlbum,
     trackTitle,
+    expectedTracks,
     expectedArtists,
+    expectedTrackCount,
     autoFillAlbumOnFirstMatch = false,
     mode = "auto",
     endpoint,
@@ -19289,7 +19535,12 @@
         ?.map((artist) => artist.trim())
         .filter(Boolean)
         .join("|") ?? "";
-    const requestKey = `${cacheKey}|${enabled}|${endpoint ?? ""}|${albumEndpoint ?? ""}|${mode}|${query.trim()}|${expectedAlbum?.trim() ?? ""}|${trackTitle?.trim() ?? ""}|${expectedArtistsKey}|${autoFillAlbumOnFirstMatch}|${requestJson ? "custom" : "fetch"}`;
+    const expectedTracksKey =
+      expectedTracks
+        ?.map((track) => track.trim())
+        .filter(Boolean)
+        .join("|") ?? "";
+    const requestKey = `${cacheKey}|${enabled}|${endpoint ?? ""}|${albumEndpoint ?? ""}|${mode}|${query.trim()}|${expectedAlbum?.trim() ?? ""}|${trackTitle?.trim() ?? ""}|${expectedTracksKey}|${expectedArtistsKey}|${expectedTrackCount ?? 0}|${autoFillAlbumOnFirstMatch}|${requestJson ? "custom" : "fetch"}`;
     (0, import_react.useEffect)(() => {
       if (!enabled || !query.trim()) return;
       const controller = new AbortController();
@@ -19297,7 +19548,9 @@
         query: query.trim(),
         expectedAlbum,
         trackTitle,
+        expectedTracks,
         expectedArtists,
+        expectedTrackCount,
         autoFillAlbumOnFirstMatch,
         mode,
         endpoint,
@@ -19329,6 +19582,8 @@
       endpoint,
       expectedAlbum,
       expectedArtists,
+      expectedTrackCount,
+      expectedTracks,
       mode,
       query,
       requestJson,
@@ -19393,17 +19648,20 @@
       findBangumiMountPoint()
     );
   }
+  function findBangumiTrackListElements() {
+    return [
+      ...document.querySelectorAll(
+        'ul.line_list_music, ul.line_list.line_list_music, ul[class*="line_list_music"]',
+      ),
+    ];
+  }
   function findBangumiTrackListElement() {
-    return document.querySelector(
-      'ul.line_list_music, ul.line_list.line_list_music, ul[class*="line_list_music"]',
-    );
+    return findBangumiTrackListElements()[0] ?? null;
   }
   function findBangumiTrackRows() {
-    const trackList = findBangumiTrackListElement();
-    if (!trackList) return [];
-    return [...trackList.querySelectorAll(":scope > li")].filter((row) =>
-      row.querySelector("h6 a"),
-    );
+    return findBangumiTrackListElements()
+      .flatMap((trackList) => [...trackList.querySelectorAll(":scope > li")])
+      .filter((row) => row.querySelector("h6 a"));
   }
   function getBangumiTrackTitle(row) {
     return row.querySelector("h6 a")?.textContent?.trim() ?? "";
@@ -19507,6 +19765,19 @@
   };
   var VOLUME_STORAGE_KEY = "bangumi-plus-music-volume";
   var ALBUM_AUTO_FILL_MIN_MATCHES = 3;
+  async function requestLocalJson(baseUrl, pathname, signal) {
+    const url = new URL(pathname, `${baseUrl.trim().replace(/\/$/, "")}/`);
+    const response = await fetch(url, {
+      signal,
+      headers: { Accept: "application/json" },
+    });
+    const data = await response.json();
+    if (!response.ok)
+      throw new Error(
+        data.message || `本地 NCM API 请求失败（HTTP ${response.status}）`,
+      );
+    return data;
+  }
   function readStoredVolume() {
     try {
       const value = Number(window.localStorage.getItem(VOLUME_STORAGE_KEY));
@@ -19546,39 +19817,39 @@
     }, 0);
   }
   function matchSong(title, songs, expectedArtists = []) {
-    const normalizedTitle = normalizeTrackTitle(title);
-    if (!normalizedTitle) return null;
+    const expectedTitle = cleanTrackTitle(title);
+    if (!expectedTitle) return null;
     const candidates = songs
       .map((song, index) => {
-        const name = normalizeTrackTitle(song.name);
+        const titleSimilarity = textSimilarity(expectedTitle, song.name);
         return {
           song,
-          name,
-          titleScore:
-            name === normalizedTitle
-              ? 1e3
-              : name.includes(normalizedTitle) || normalizedTitle.includes(name)
-                ? -Math.abs(name.length - normalizedTitle.length)
-                : -Infinity,
+          titleSimilarity,
+          titleScore: titleSimilarity * 1e3,
           artistScore: artistOverlapScore(song, expectedArtists),
           index,
         };
       })
       .filter(
-        ({ name: normalizedSongName }) =>
-          normalizedSongName.length > 2 &&
-          (normalizedSongName.includes(normalizedTitle) ||
-            normalizedTitle.includes(normalizedSongName)),
-      )
-      .sort((a, b) => a.index - b.index);
+        ({ titleSimilarity }) => titleSimilarity >= SIMILAR_TITLE_THRESHOLD,
+      );
     const exactCandidates = candidates.filter(
-      ({ titleScore }) => titleScore === 1e3,
+      ({ titleSimilarity }) => titleSimilarity >= 0.999,
     );
     return (
       [...(exactCandidates.length > 0 ? exactCandidates : candidates)].sort(
-        (a, b) => b.artistScore - a.artistScore,
+        (a, b) =>
+          b.titleScore - a.titleScore ||
+          b.artistScore - a.artistScore ||
+          a.index - b.index,
       )[0]?.song ?? null
     );
+  }
+  function getBangumiCleanTrackTitle(row) {
+    return getBangumiTrackTitle(row)
+      .replace(/^\s*\d+\s*[.、:：)）-]?\s*/, "")
+      .replace(/\s*[／/].*$/, "")
+      .trim();
   }
   function matchRowsWithSongs(
     rows,
@@ -19590,7 +19861,7 @@
     const usedSongIds = /* @__PURE__ */ new Set();
     const matches = rows.map((row) => {
       const song = matchSong(
-        getBangumiTrackTitle(row).replace(/\s*[／/].*$/, ""),
+        getBangumiCleanTrackTitle(row),
         songs.filter((song) => !usedSongIds.has(song.id)),
         expectedArtists,
       );
@@ -19615,6 +19886,7 @@
     albumEndpoint,
     audioEndpoint,
     accountEndpoint,
+    localApiBase,
     requestJson,
     mode = "auto",
     sourceLabel = "网易云音乐",
@@ -19627,6 +19899,8 @@
     const [accountStatus, setAccountStatus] = (0, import_react.useState)(
       "checking",
     );
+    const [qrLogin, setQrLogin] = (0, import_react.useState)(null);
+    const [qrLoginKey, setQrLoginKey] = (0, import_react.useState)("");
     const audioRef = (0, import_react.useRef)(null);
     const requestControllerRef = (0, import_react.useRef)(null);
     const currentSongIdRef = (0, import_react.useRef)(null);
@@ -19641,14 +19915,23 @@
       subject.name_cn && subject.name !== subject.name_cn
         ? `${subject.name_cn} ${subject.name}`
         : displayName;
-    const trackTitle = (0, import_react.useMemo)(() => {
-      if (!opened) return "";
-      return (
-        findBangumiTrackRows()
-          .map((row) => getBangumiTrackTitle(row).replace(/\s*[／/].*$/, ""))
-          .find(Boolean) ?? ""
-      );
+    const trackInfo = (0, import_react.useMemo)(() => {
+      if (!opened)
+        return {
+          titles: [],
+          count: 0,
+        };
+      const rows = findBangumiTrackRows();
+      return {
+        titles: rows
+          .map((row) => getBangumiCleanTrackTitle(row))
+          .filter(Boolean),
+        count: rows.length,
+      };
     }, [opened]);
+    const trackTitle = trackInfo.titles[0] ?? "";
+    const expectedTracks = trackInfo.titles;
+    const expectedTrackCount = trackInfo.count;
     const expectedArtists = (0, import_react.useMemo)(() => {
       if (!opened) return [];
       return getBangumiArtistNames();
@@ -19657,7 +19940,9 @@
       query,
       expectedAlbum: displayName,
       trackTitle,
+      expectedTracks,
       expectedArtists,
+      expectedTrackCount,
       mode,
       endpoint,
       albumEndpoint,
@@ -19967,11 +20252,147 @@
       );
       if (loginWindow) loginWindow.opener = null;
     };
+    const closeQrLogin = () => {
+      setQrLoginKey("");
+      setQrLogin(null);
+    };
+    const startLocalQrLogin = async () => {
+      if (!localApiBase) return;
+      setQrLoginKey("");
+      setQrLogin({
+        phase: "loading",
+        message: "正在生成登录二维码...",
+      });
+      try {
+        const keyResponse = await requestLocalJson(
+          localApiBase,
+          "login/qr/key",
+        );
+        const key = keyResponse.data?.unikey ?? keyResponse.unikey;
+        if (!key) throw new Error("无法创建网易云登录二维码");
+        const imageResponse = await requestLocalJson(
+          localApiBase,
+          `login/qr/create?key=${encodeURIComponent(key)}`,
+        );
+        const qrimg = imageResponse.data?.qrimg ?? imageResponse.qrimg;
+        if (!qrimg) throw new Error("无法加载网易云登录二维码");
+        setQrLoginKey(key);
+        setQrLogin({
+          phase: "waiting",
+          qrimg,
+          message: "请使用网易云音乐 App 扫码",
+        });
+      } catch (reason) {
+        setQrLogin({
+          phase: "error",
+          message:
+            reason instanceof Error
+              ? reason.message
+              : "网易云登录二维码加载失败",
+        });
+      }
+    };
+    const logoutLocalNcm = async () => {
+      if (!localApiBase) return;
+      try {
+        await requestLocalJson(localApiBase, "logout", void 0);
+      } finally {
+        setAccountStatus("logged-out");
+      }
+    };
+    const handleLoginClick = () => {
+      if (accountStatus === "logged-in") {
+        if (localApiBase) logoutLocalNcm();
+        else openNeteaseLogin();
+        return;
+      }
+      if (localApiBase) {
+        startLocalQrLogin();
+        return;
+      }
+      openNeteaseLogin();
+    };
+    (0, import_react.useEffect)(() => {
+      if (!localApiBase || !qrLoginKey) return;
+      if (qrLogin?.phase !== "waiting" && qrLogin?.phase !== "scanned") return;
+      const controller = new AbortController();
+      let stopped = false;
+      const poll = async () => {
+        try {
+          const response = await requestLocalJson(
+            localApiBase,
+            `login/qr/check?key=${encodeURIComponent(qrLoginKey)}`,
+            controller.signal,
+          );
+          if (stopped) return;
+          const code = Number(response.code);
+          if (code === 803) {
+            setAccountStatus("logged-in");
+            setQrLogin({
+              phase: "success",
+              message: response.profile?.nickname
+                ? `登录成功：${response.profile.nickname}`
+                : "登录成功",
+            });
+            setQrLoginKey("");
+            return;
+          }
+          if (code === 802) {
+            setQrLogin((current) =>
+              current?.qrimg
+                ? {
+                    phase: "scanned",
+                    qrimg: current.qrimg,
+                    message: response.message ?? "已扫码，请在手机上确认",
+                  }
+                : current,
+            );
+            return;
+          }
+          if (code === 800) {
+            setQrLogin({
+              phase: "error",
+              message: response.message ?? "二维码已过期，请重新生成",
+            });
+            setQrLoginKey("");
+            return;
+          }
+          setQrLogin((current) =>
+            current?.qrimg
+              ? {
+                  phase: "waiting",
+                  qrimg: current.qrimg,
+                  message: response.message ?? "等待扫码",
+                }
+              : current,
+          );
+        } catch (reason) {
+          if (controller.signal.aborted || stopped) return;
+          setQrLoginKey("");
+          setQrLogin({
+            phase: "error",
+            message:
+              reason instanceof Error
+                ? reason.message
+                : "网易云登录状态检查失败",
+          });
+        }
+      };
+      poll();
+      const timer = window.setInterval(() => void poll(), 2e3);
+      return () => {
+        stopped = true;
+        controller.abort();
+        window.clearInterval(timer);
+      };
+    }, [localApiBase, qrLogin, qrLoginKey]);
     const loginButtonLabel = accountStatus === "logged-in" ? "已登录" : "登录";
     const loginButtonTitle =
       accountStatus === "logged-in"
-        ? "网易云音乐账号已登录"
-        : "登录网易云音乐账号";
+        ? localApiBase
+          ? "退出网易云音乐登录"
+          : "网易云音乐账号已登录"
+        : "扫码登录网易云音乐账号";
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", {
       className: `music-preview${opened ? " music-preview--open" : ""}`,
       children: [
@@ -20020,7 +20441,7 @@
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
                   className: `music-preview__login${accountStatus === "logged-in" ? " music-preview__login--active" : ""}`,
                   type: "button",
-                  onClick: openNeteaseLogin,
+                  onClick: handleLoginClick,
                   title: loginButtonTitle,
                   "aria-label": loginButtonTitle,
                   children: [
@@ -20175,13 +20596,74 @@
             host,
           ),
         ),
+        qrLogin &&
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+            className: "music-preview__qr-backdrop",
+            children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+              className: "music-preview__qr-modal",
+              role: "dialog",
+              "aria-modal": "true",
+              "aria-label": "网易云音乐扫码登录",
+              children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+                  className: "music-preview__qr-header",
+                  children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+                      children: "网易云音乐登录",
+                    }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+                      className: "music-preview__close",
+                      type: "button",
+                      onClick: closeQrLogin,
+                      "aria-label": "关闭登录窗口",
+                      title: "关闭登录窗口",
+                      children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(X, {
+                        size: 14,
+                        "aria-hidden": "true",
+                      }),
+                    }),
+                  ],
+                }),
+                qrLogin.phase === "loading" &&
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+                    className: "music-preview__qr-loading",
+                    children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                      LoaderCircle,
+                      {
+                        size: 18,
+                        className: "music-preview__spinner",
+                        "aria-hidden": "true",
+                      },
+                    ),
+                  }),
+                (qrLogin.phase === "waiting" || qrLogin.phase === "scanned") &&
+                  qrLogin.qrimg &&
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("img", {
+                    className: "music-preview__qr-image",
+                    src: qrLogin.qrimg,
+                    alt: "网易云音乐登录二维码",
+                  }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+                  className: "music-preview__qr-message",
+                  children: qrLogin.message ?? "请使用网易云音乐 App 扫码",
+                }),
+                qrLogin.phase === "error" &&
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+                    className: "music-preview__qr-retry",
+                    type: "button",
+                    onClick: () => void startLocalQrLogin(),
+                    children: "重新生成",
+                  }),
+              ],
+            }),
+          }),
       ],
     });
   }
   //#endregion
   //#region src/App.css?inline
   var App_default =
-    ":root {\n  --bangumi-plus-panel-bg: #f5f5f5;\n  --bangumi-plus-panel-border: #ddd;\n  --bangumi-plus-panel-text: #777;\n  --bangumi-plus-panel-muted: #999;\n  --bangumi-plus-panel-hover: #fffaf6;\n  --bangumi-plus-track-bg: #fff;\n  --bangumi-plus-track-border: #d7d7d7;\n  --bangumi-plus-track-active-bg: #fff7ef;\n}\n\n:root[data-bangumi-plus-theme='dark'] {\n  --bangumi-plus-panel-bg: #282828;\n  --bangumi-plus-panel-border: #484848;\n  --bangumi-plus-panel-text: #c4c4c4;\n  --bangumi-plus-panel-muted: #9a9a9a;\n  --bangumi-plus-panel-hover: #382f29;\n  --bangumi-plus-track-bg: #333;\n  --bangumi-plus-track-border: #555;\n  --bangumi-plus-track-active-bg: #3a302a;\n}\n\n.music-preview {\n  margin: 0 0 10px;\n  border: 1px solid var(--bangumi-plus-panel-border);\n  border-radius: 5px;\n  background: var(--bangumi-plus-panel-bg);\n  overflow: hidden;\n}\n\n.music-preview__toolbar {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  min-height: 38px;\n}\n\n.music-preview__toolbar-actions {\n  display: inline-flex;\n  align-items: center;\n}\n\n.music-preview__toggle,\n.music-preview__login,\n.music-preview__close,\n.music-preview__collapse {\n  display: inline-flex;\n  align-items: center;\n  border: 0;\n  background: transparent;\n  color: #c96f31;\n  cursor: pointer;\n}\n\n.music-preview__login {\n  gap: 4px;\n  margin-left: 0;\n  padding: 5px 8px;\n  border: 1px solid var(--bangumi-plus-panel-border);\n  border-radius: 3px;\n  color: var(--bangumi-plus-panel-muted);\n  font-size: 11px;\n}\n\n.music-preview__login:hover {\n  border-color: #e28b4d;\n  background: var(--bangumi-plus-panel-hover);\n  color: #d97732;\n}\n\n.music-preview__login--active {\n  border-color: #73a97d;\n  color: #4f8a5a;\n}\n\n.music-preview__login--active:hover {\n  border-color: #4f8a5a;\n  color: #3c7448;\n}\n\n.music-preview__toggle {\n  gap: 7px;\n  padding: 9px 12px;\n  font-size: 13px;\n  font-weight: 600;\n}\n\n.music-preview__toggle:hover,\n.music-preview__close:hover,\n.music-preview__collapse:hover { color: #a9531c; }\n\n.music-preview__source {\n  color: var(--bangumi-plus-panel-muted);\n  font-size: 11px;\n  font-weight: 400;\n}\n\n.music-preview__close {\n  justify-content: center;\n  width: 34px;\n  height: 34px;\n  margin-right: 2px;\n  color: var(--bangumi-plus-panel-muted);\n}\n\n.music-preview__body {\n  border-top: 1px solid var(--bangumi-plus-panel-border);\n  padding: 0 10px 10px;\n}\n\n.music-preview__volume {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  min-height: 40px;\n  padding: 0 4px;\n  border-bottom: 1px solid var(--bangumi-plus-panel-border);\n  color: var(--bangumi-plus-panel-text);\n  font-size: 12px;\n}\n\n.music-preview__volume-button {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 24px;\n  height: 24px;\n  border: 1px solid var(--bangumi-plus-panel-border);\n  border-radius: 3px;\n  background: var(--bangumi-plus-track-bg);\n  color: var(--bangumi-plus-panel-muted);\n  cursor: pointer;\n  transition: border-color .15s, color .15s, background .15s;\n}\n\n.music-preview__volume-button:hover {\n  border-color: #e28b4d;\n  background: var(--bangumi-plus-panel-hover);\n  color: #d97732;\n}\n\n.music-preview__volume-range {\n  flex: 1;\n  max-width: 220px;\n  height: 4px;\n  accent-color: #e28b4d;\n  cursor: pointer;\n}\n\n.music-preview__volume-value {\n  min-width: 36px;\n  color: var(--bangumi-plus-panel-muted);\n  font-variant-numeric: tabular-nums;\n  text-align: right;\n}\n\n.music-preview__status {\n  display: flex;\n  align-items: center;\n  gap: 7px;\n  min-height: 38px;\n  padding: 0 4px;\n  color: var(--bangumi-plus-panel-text);\n  font-size: 12px;\n}\n\n.music-preview__status--error { color: #d9825b; }\n.music-preview__spinner { animation: bangumi-plus-spin 0.9s linear infinite; }\n\n@keyframes bangumi-plus-spin {\n  to { transform: rotate(360deg); }\n}\n";
+    ":root {\n  --bangumi-plus-panel-bg: #f5f5f5;\n  --bangumi-plus-panel-border: #ddd;\n  --bangumi-plus-panel-text: #777;\n  --bangumi-plus-panel-muted: #999;\n  --bangumi-plus-panel-hover: #fffaf6;\n  --bangumi-plus-track-bg: #fff;\n  --bangumi-plus-track-border: #d7d7d7;\n  --bangumi-plus-track-active-bg: #fff7ef;\n}\n\n:root[data-bangumi-plus-theme='dark'] {\n  --bangumi-plus-panel-bg: #282828;\n  --bangumi-plus-panel-border: #484848;\n  --bangumi-plus-panel-text: #c4c4c4;\n  --bangumi-plus-panel-muted: #9a9a9a;\n  --bangumi-plus-panel-hover: #382f29;\n  --bangumi-plus-track-bg: #333;\n  --bangumi-plus-track-border: #555;\n  --bangumi-plus-track-active-bg: #3a302a;\n}\n\n.music-preview {\n  margin: 0 0 10px;\n  border: 1px solid var(--bangumi-plus-panel-border);\n  border-radius: 5px;\n  background: var(--bangumi-plus-panel-bg);\n  overflow: hidden;\n}\n\n.music-preview__toolbar {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  min-height: 38px;\n}\n\n.music-preview__toolbar-actions {\n  display: inline-flex;\n  align-items: center;\n}\n\n.music-preview__toggle,\n.music-preview__login,\n.music-preview__close,\n.music-preview__collapse {\n  display: inline-flex;\n  align-items: center;\n  border: 0;\n  background: transparent;\n  color: #c96f31;\n  cursor: pointer;\n}\n\n.music-preview__login {\n  gap: 4px;\n  margin-left: 0;\n  padding: 5px 8px;\n  border: 1px solid var(--bangumi-plus-panel-border);\n  border-radius: 3px;\n  color: var(--bangumi-plus-panel-muted);\n  font-size: 11px;\n}\n\n.music-preview__login:hover {\n  border-color: #e28b4d;\n  background: var(--bangumi-plus-panel-hover);\n  color: #d97732;\n}\n\n.music-preview__login--active {\n  border-color: #73a97d;\n  color: #4f8a5a;\n}\n\n.music-preview__login--active:hover {\n  border-color: #4f8a5a;\n  color: #3c7448;\n}\n\n.music-preview__toggle {\n  gap: 7px;\n  padding: 9px 12px;\n  font-size: 13px;\n  font-weight: 600;\n}\n\n.music-preview__toggle:hover,\n.music-preview__close:hover,\n.music-preview__collapse:hover { color: #a9531c; }\n\n.music-preview__source {\n  color: var(--bangumi-plus-panel-muted);\n  font-size: 11px;\n  font-weight: 400;\n}\n\n.music-preview__qr-backdrop {\n  position: fixed;\n  inset: 0;\n  z-index: 2147483000;\n  display: grid;\n  place-items: center;\n  padding: 20px;\n  background: rgba(0, 0, 0, .45);\n}\n\n.music-preview__qr-modal {\n  width: min(300px, calc(100vw - 40px));\n  padding: 16px;\n  border: 1px solid var(--bangumi-plus-panel-border);\n  border-radius: 5px;\n  background: var(--bangumi-plus-panel-bg);\n  color: var(--bangumi-plus-panel-text);\n  text-align: center;\n}\n\n.music-preview__qr-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  margin-bottom: 10px;\n  font-size: 14px;\n  font-weight: 600;\n}\n\n.music-preview__qr-header .music-preview__close {\n  width: 26px;\n  height: 26px;\n  margin-right: 0;\n}\n\n.music-preview__qr-loading {\n  display: grid;\n  place-items: center;\n  min-height: 160px;\n  color: var(--bangumi-plus-panel-muted);\n}\n\n.music-preview__qr-image {\n  display: block;\n  width: 160px;\n  height: 160px;\n  margin: 0 auto 8px;\n  border: 1px solid var(--bangumi-plus-panel-border);\n  border-radius: 4px;\n  background: #fff;\n}\n\n.music-preview__qr-message {\n  margin: 0 0 8px;\n  color: var(--bangumi-plus-panel-muted);\n  font-size: 12px;\n  line-height: 1.4;\n}\n\n.music-preview__qr-retry {\n  display: inline-flex;\n  align-items: center;\n  min-height: 28px;\n  padding: 0 10px;\n  border: 1px solid #e28b4d;\n  border-radius: 3px;\n  background: transparent;\n  color: #d97732;\n  font-size: 12px;\n  cursor: pointer;\n}\n\n.music-preview__close {\n  justify-content: center;\n  width: 34px;\n  height: 34px;\n  margin-right: 2px;\n  color: var(--bangumi-plus-panel-muted);\n}\n\n.music-preview__body {\n  border-top: 1px solid var(--bangumi-plus-panel-border);\n  padding: 0 10px 10px;\n}\n\n.music-preview__volume {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  min-height: 40px;\n  padding: 0 4px;\n  border-bottom: 1px solid var(--bangumi-plus-panel-border);\n  color: var(--bangumi-plus-panel-text);\n  font-size: 12px;\n}\n\n.music-preview__volume-button {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 24px;\n  height: 24px;\n  border: 1px solid var(--bangumi-plus-panel-border);\n  border-radius: 3px;\n  background: var(--bangumi-plus-track-bg);\n  color: var(--bangumi-plus-panel-muted);\n  cursor: pointer;\n  transition: border-color .15s, color .15s, background .15s;\n}\n\n.music-preview__volume-button:hover {\n  border-color: #e28b4d;\n  background: var(--bangumi-plus-panel-hover);\n  color: #d97732;\n}\n\n.music-preview__volume-range {\n  flex: 1;\n  max-width: 220px;\n  height: 4px;\n  accent-color: #e28b4d;\n  cursor: pointer;\n}\n\n.music-preview__volume-value {\n  min-width: 36px;\n  color: var(--bangumi-plus-panel-muted);\n  font-variant-numeric: tabular-nums;\n  text-align: right;\n}\n\n.music-preview__status {\n  display: flex;\n  align-items: center;\n  gap: 7px;\n  min-height: 38px;\n  padding: 0 4px;\n  color: var(--bangumi-plus-panel-text);\n  font-size: 12px;\n}\n\n.music-preview__status--error { color: #d9825b; }\n.music-preview__spinner { animation: bangumi-plus-spin 0.9s linear infinite; }\n\n@keyframes bangumi-plus-spin {\n  to { transform: rotate(360deg); }\n}\n";
   //#endregion
   //#region src/lib/localNcmResolver.ts
   var DEFAULT_LOCAL_NCM_BASE = "http://127.0.0.1:3000";
@@ -20308,7 +20790,6 @@
     style.textContent = [
       App_default,
       "#bangumi-plus-root { max-width: none; margin: 0; padding: 0; }",
-      ".music-preview__login { display: none !important; }",
     ].join("\n");
     document.head.append(style);
   }
@@ -20436,6 +20917,7 @@
           albumEndpoint: NETEASE_ALBUM_ENDPOINT,
           audioEndpoint: NETEASE_AUDIO_ENDPOINT,
           accountEndpoint: NETEASE_ACCOUNT_ENDPOINT,
+          localApiBase: getLocalApiBase(),
           requestJson,
           sourceLabel: "本地 NCM",
           autoFillAlbumOnFirstMatch: true,

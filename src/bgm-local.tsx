@@ -27,8 +27,6 @@ function appendStyles() {
   style.textContent = [
     appStyles,
     '#bangumi-plus-root { max-width: none; margin: 0; padding: 0; }',
-    // 登录状态保存在本地 NCM 服务器，不在 bgm.tv 页面里打开网易云登录页。
-    '.music-preview__login { display: none !important; }',
   ].join('\n');
   document.head.append(style);
 }
@@ -145,6 +143,7 @@ async function mount() {
         albumEndpoint={NETEASE_ALBUM_ENDPOINT}
         audioEndpoint={NETEASE_AUDIO_ENDPOINT}
         accountEndpoint={NETEASE_ACCOUNT_ENDPOINT}
+        localApiBase={getLocalApiBase()}
         requestJson={requestJson}
         sourceLabel="本地 NCM"
         autoFillAlbumOnFirstMatch

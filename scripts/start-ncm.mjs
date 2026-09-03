@@ -3,10 +3,11 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const projectRoot = fileURLToPath(new URL('..', import.meta.url));
-const ncmEntry = `${projectRoot}node_modules/NeteaseCloudMusicApi/app.js`;
+const ncmPackageEntry = `${projectRoot}node_modules/NeteaseCloudMusicApi/app.js`;
+const serverEntry = `${projectRoot}scripts/ncm-server.mjs`;
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 
-if (!existsSync(ncmEntry)) {
+if (!existsSync(ncmPackageEntry)) {
   console.info('首次启动：正在安装 NeteaseCloudMusicApi...');
   const install = spawnSync(npmCommand, ['install', '--no-audit', '--no-fund'], {
     cwd: projectRoot,
@@ -21,7 +22,7 @@ if (!existsSync(ncmEntry)) {
   }
 }
 
-const server = spawn(process.execPath, [ncmEntry], {
+const server = spawn(process.execPath, [serverEntry], {
   cwd: projectRoot,
   stdio: 'inherit',
 });

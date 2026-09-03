@@ -4,6 +4,11 @@ import type {
   NeteaseResolvedResult,
   NeteaseSong,
 } from '../types/bangumi';
+import {
+  SIMILAR_TITLE_THRESHOLD,
+  cleanTrackTitle,
+  textSimilarity,
+} from './titleMatch';
 
 interface SearchSong {
   id: number;
@@ -41,7 +46,9 @@ export interface ResolveNeteaseTracksOptions {
   query: string;
   expectedAlbum?: string;
   trackTitle?: string;
+  expectedTracks?: string[];
   expectedArtists?: string[];
+  expectedTrackCount?: number;
   autoFillAlbumOnFirstMatch?: boolean;
   mode?: NeteaseResolveMode;
   endpoint?: string;
@@ -171,12 +178,16 @@ function artistOverlapScore(song: NeteaseSong, expectedArtists?: string[]) {
   }, 0);
 }
 
-function getSearchQueries(query: string, trackTitle?: string) {
+function getSearchQueries(query: string, trackTitles: string[]) {
   const trimmed = query.trim();
-  const track = trackTitle?.trim();
-  const trackWithAlbum = track ? `${track} ${trimmed}` : '';
+  const anchors = trackTitles.slice(0, 3).map(cleanTrackTitle).filter(Boolean);
+  const trackWithAlbumQueries = anchors.map((track) => `${track} ${trimmed}`);
   const tokens = trimmed.split(/\s+/).filter((token) => token.length > 1);
-  return [...new Set([trackWithAlbum, trimmed, ...tokens])].filter(Boolean).slice(0, 4);
+  // Album names can make NCM cloudsearch miss the actual soundtrack, so the
+  // exact track titles are always searched too.
+  return [...new Set([...trackWithAlbumQueries, trimmed, ...anchors, ...tokens])]
+    .filter(Boolean)
+    .slice(0, 7);
 }
 
 function albumNameMatches(albumName: string | undefined, expectedAlbum: string) {
@@ -190,6 +201,7 @@ function albumNameMatches(albumName: string | undefined, expectedAlbum: string) 
 
   const albumTokens = albumName.split(/\s+/).map(normalize).filter((token) => token.length > 1);
   const expectedTokens = expectedAlbum.split(/\s+/).map(normalize).filter((token) => token.length > 1);
+  if (textSimilarity(albumName, expectedAlbum) >= 0.82) return true;
   return expectedTokens.some((expectedToken) => albumTokens.some((albumToken) => {
     return albumToken === expectedToken || albumToken.includes(expectedToken) || expectedToken.includes(albumToken);
   }));
@@ -214,36 +226,111 @@ function chooseAlbumCandidates(songs: NeteaseSong[], query: string, expectedArti
   });
 }
 
-function chooseSingleSong(songs: NeteaseSong[], trackTitle: string | undefined, expectedAlbum: string | undefined, expectedArtists?: string[]) {
-  const normalizedTrack = normalize(trackTitle ?? '');
+function albumMatchScore(song: NeteaseSong, expectedAlbum: string | undefined) {
   const normalizedAlbum = normalize(expectedAlbum ?? '');
+  if (!normalizedAlbum || !song.albumName || !expectedAlbum) return 0;
+  const album = normalize(song.albumName);
+  if (album === normalizedAlbum) return 400;
+  if (album.includes(normalizedAlbum) || normalizedAlbum.includes(album)) return 300;
+  if (textSimilarity(expectedAlbum, song.albumName) >= 0.82) return 250;
+  return 0;
+}
+
+function isTrackTitleMatch(expectedTitle: string, songTitle: string) {
+  const expected = cleanTrackTitle(expectedTitle);
+  if (!expected || !songTitle.trim()) return false;
+  return textSimilarity(expected, songTitle) >= SIMILAR_TITLE_THRESHOLD;
+}
+
+function countAlbumMatches(
+  collection: NeteaseSong[],
+  expectedTracks: string[],
+  expectedArtists?: string[],
+) {
+  const usedSongIds = new Set<number>();
+  let matchedCount = 0;
+
+  for (const expectedTitle of expectedTracks) {
+    const availableSongs = collection.filter((song) => !usedSongIds.has(song.id));
+    const song = getFirstMatchCandidates(
+      availableSongs,
+      expectedTitle,
+      collection[0]?.albumName,
+      expectedArtists,
+    )[0];
+    if (!song || !isTrackTitleMatch(expectedTitle, song.name)) continue;
+    usedSongIds.add(song.id);
+    matchedCount += 1;
+  }
+
+  return matchedCount;
+}
+
+function getRequiredAlbumMatchCount(expectedTracks: string[]) {
+  return Math.min(3, expectedTracks.length);
+}
+
+function getAlbumAnchorCandidates(
+  songs: NeteaseSong[],
+  expectedTracks: string[],
+  expectedAlbum: string | undefined,
+  expectedArtists?: string[],
+) {
+  const anchors: NeteaseSong[] = [];
+  const seenSongIds = new Set<number>();
+
+  // If the first song accidentally points at a cover/special edition, later
+  // Bangumi rows provide independent album anchors.
+  for (const trackTitle of expectedTracks.slice(0, 4)) {
+    for (const song of getFirstMatchCandidates(songs, trackTitle, expectedAlbum, expectedArtists).slice(0, 2)) {
+      if (!song.albumId || seenSongIds.has(song.id)) continue;
+      seenSongIds.add(song.id);
+      anchors.push(song);
+    }
+  }
+
+  return anchors;
+}
+
+function chooseSingleSong(songs: NeteaseSong[], trackTitle: string | undefined, expectedAlbum: string | undefined, expectedArtists?: string[]) {
+  return getFirstMatchCandidates(songs, trackTitle, expectedAlbum, expectedArtists)[0] ?? songs[0];
+}
+
+function getFirstMatchCandidates(songs: NeteaseSong[], trackTitle: string | undefined, expectedAlbum: string | undefined, expectedArtists?: string[]) {
+  const expectedTitle = cleanTrackTitle(trackTitle);
 
   const candidates = songs.map((song, index) => {
-    const title = normalize(song.name);
-    const titleScore = !normalizedTrack ? 0
-      : title === normalizedTrack ? 1000
-        : title.includes(normalizedTrack) || normalizedTrack.includes(title) ? 700 - Math.abs(title.length - normalizedTrack.length)
-          : 0;
-    const albumScore = normalizedAlbum && song.albumName && normalize(song.albumName).includes(normalizedAlbum) ? 300 : 0;
+    const titleSimilarity = expectedTitle ? textSimilarity(expectedTitle, song.name) : 0;
+    const titleScore = titleSimilarity * 1000;
+    const albumScore = albumMatchScore(song, expectedAlbum);
     const artistScore = artistOverlapScore(song, expectedArtists) * 500;
-    return { song, titleScore, score: titleScore + albumScore + artistScore - index / songs.length };
+    return { song, titleScore, titleSimilarity, score: titleScore + albumScore + artistScore - index / songs.length };
   });
-  const exactCandidates = normalizedTrack
-    ? candidates.filter(({ titleScore }) => titleScore === 1000)
-    : [];
-  const usableCandidates = exactCandidates.length > 0 ? exactCandidates : candidates;
+  const exactCandidates = expectedTitle
+    ? candidates.filter(({ titleSimilarity }) => titleSimilarity >= 0.999)
+    : candidates;
+  const similarCandidates = expectedTitle
+    ? candidates.filter(({ titleSimilarity }) => titleSimilarity >= SIMILAR_TITLE_THRESHOLD)
+    : candidates;
+  const usableCandidates = exactCandidates.length > 0
+    ? exactCandidates
+    : similarCandidates.length > 0 ? similarCandidates : candidates;
 
-  return [...usableCandidates].sort((a, b) => b.score - a.score)[0]?.song ?? songs[0];
+  return [...usableCandidates]
+    .sort((a, b) => b.score - a.score)
+    .map(({ song }) => song);
 }
 
-function titleMatches(songName: string, trackTitle: string | undefined) {
-  const title = normalize(trackTitle ?? '');
-  const name = normalize(songName);
-  if (!title || !name) return false;
-  return name === title || name.includes(title) || title.includes(name);
-}
-
-async function loadMatchingAlbum(candidates: NeteaseSong[][], expectedAlbum: string, endpoint: string, signal: AbortSignal | undefined, requester?: JsonRequester) {
+async function loadMatchingAlbum(
+  candidates: NeteaseSong[][],
+  expectedAlbum: string,
+  endpoint: string,
+  signal: AbortSignal | undefined,
+  requester?: JsonRequester,
+  expectedTracks: string[] = [],
+  expectedArtists?: string[],
+  expectedTrackCount?: number,
+) {
   const matchingCandidates = expectedAlbum.trim()
     ? candidates.filter((candidate) => albumNameMatches(candidate[0]?.albumName, expectedAlbum))
     : candidates;
@@ -252,7 +339,10 @@ async function loadMatchingAlbum(candidates: NeteaseSong[][], expectedAlbum: str
     if (!candidate[0]?.albumId) continue;
     try {
       const complete = await getAlbumSongs(candidate[0].albumId, endpoint, signal, requester);
-      if (complete.length > 0 && albumNameMatches(complete[0].albumName, expectedAlbum)) return complete;
+      if (!complete.length || !albumNameMatches(complete[0].albumName, expectedAlbum)) continue;
+      if (expectedTrackCount && Math.abs(complete.length - expectedTrackCount) > 1) continue;
+      if (expectedTracks.length && countAlbumMatches(complete, expectedTracks, expectedArtists) < getRequiredAlbumMatchCount(expectedTracks)) continue;
+      return complete;
     } catch (reason) {
       if (reason instanceof DOMException && reason.name === 'AbortError') throw reason;
     }
@@ -261,17 +351,85 @@ async function loadMatchingAlbum(candidates: NeteaseSong[][], expectedAlbum: str
   return null;
 }
 
-async function loadAlbumForFirstMatch(song: NeteaseSong, endpoint: string, signal: AbortSignal | undefined, requester?: JsonRequester) {
+async function loadAlbumForAnchor(
+  song: NeteaseSong,
+  endpoint: string,
+  signal: AbortSignal | undefined,
+  requester?: JsonRequester,
+) {
   if (!song.albumId) return null;
   const complete = await getAlbumSongs(song.albumId, endpoint, signal, requester);
-  return complete.some((track) => track.id === song.id) ? complete : null;
+  if (!complete.some((track) => track.id === song.id)) return null;
+  return complete;
+}
+
+async function loadAlbumUsingTrackAnchors({
+  songs,
+  expectedAlbum,
+  expectedTracks,
+  expectedArtists,
+  expectedTrackCount,
+  endpoint,
+  signal,
+  requester,
+}: {
+  songs: NeteaseSong[];
+  expectedAlbum: string | undefined;
+  expectedTracks: string[];
+  expectedArtists?: string[];
+  expectedTrackCount?: number;
+  endpoint: string;
+  signal: AbortSignal | undefined;
+  requester?: JsonRequester;
+}): Promise<NeteaseResolvedResult | null> {
+  const anchorCandidates = getAlbumAnchorCandidates(songs, expectedTracks, expectedAlbum, expectedArtists);
+  const requiredMatches = getRequiredAlbumMatchCount(expectedTracks);
+  const triedAlbumIds = new Set<number>();
+  let fallback: { collection: NeteaseSong[]; score: number } | null = null;
+
+  for (const anchor of anchorCandidates) {
+    if (anchor.albumId === undefined) continue;
+    if (triedAlbumIds.has(anchor.albumId)) continue;
+    triedAlbumIds.add(anchor.albumId);
+
+    try {
+      const collection = await loadAlbumForAnchor(anchor, endpoint, signal, requester);
+      if (!collection || collection.length <= 1) continue;
+
+      const matchedCount = countAlbumMatches(collection, expectedTracks, expectedArtists);
+      const countDelta = expectedTrackCount ? Math.abs(collection.length - expectedTrackCount) : 0;
+      if (matchedCount >= requiredMatches && (!expectedTrackCount || countDelta <= 1)) {
+        return {
+          mode: 'album',
+          songs: collection,
+          albumName: collection[0].albumName,
+          albumId: collection[0].albumId,
+        };
+      }
+
+      const score = matchedCount * 100 - countDelta;
+      if (!fallback || score > fallback.score) fallback = { collection, score };
+    } catch (reason) {
+      if (reason instanceof DOMException && reason.name === 'AbortError') throw reason;
+    }
+  }
+
+  if (!fallback) return null;
+  return {
+    mode: 'album',
+    songs: fallback.collection,
+    albumName: fallback.collection[0].albumName,
+    albumId: fallback.collection[0].albumId,
+  };
 }
 
 export async function resolveNeteaseTracks({
   query,
   expectedAlbum,
   trackTitle,
+  expectedTracks: expectedTrackList,
   expectedArtists,
+  expectedTrackCount,
   autoFillAlbumOnFirstMatch = false,
   mode = 'auto',
   endpoint = '/api/netease/search/get/web',
@@ -279,7 +437,8 @@ export async function resolveNeteaseTracks({
   signal,
   requestJson: requester,
 }: ResolveNeteaseTracksOptions): Promise<NeteaseResolvedResult> {
-  const results = await Promise.allSettled(getSearchQueries(query, trackTitle).map((searchQuery) => searchSongs(searchQuery, endpoint, signal, requester)));
+  const expectedTracks = expectedTrackList?.length ? expectedTrackList : trackTitle ? [trackTitle] : [];
+  const results = await Promise.allSettled(getSearchQueries(query, expectedTracks).map((searchQuery) => searchSongs(searchQuery, endpoint, signal, requester)));
   const successful = results.filter((result): result is PromiseFulfilledResult<NeteaseSong[]> => result.status === 'fulfilled').flatMap((result) => result.value);
   if (successful.length === 0) {
     const reason = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')?.reason;
@@ -291,21 +450,30 @@ export async function resolveNeteaseTracks({
   if (mode === 'single') return { mode: 'single', songs: [chooseSingleSong(songs, trackTitle, expectedAlbum, expectedArtists)] };
 
   if (autoFillAlbumOnFirstMatch) {
-    const firstMatch = chooseSingleSong(songs, trackTitle, expectedAlbum, expectedArtists);
-    if (titleMatches(firstMatch.name, trackTitle)) {
-      try {
-        const collection = await loadAlbumForFirstMatch(firstMatch, albumEndpoint, signal, requester);
-        if (collection?.length) {
-          return { mode: 'album', songs: collection, albumName: collection[0].albumName, albumId: collection[0].albumId };
-        }
-      } catch (reason) {
-        if (reason instanceof DOMException && reason.name === 'AbortError') throw reason;
-      }
-    }
+    const anchoredAlbum = await loadAlbumUsingTrackAnchors({
+      songs,
+      expectedAlbum,
+      expectedTracks,
+      expectedArtists,
+      expectedTrackCount,
+      endpoint: albumEndpoint,
+      signal,
+      requester,
+    });
+    if (anchoredAlbum) return anchoredAlbum;
   }
 
   const candidates = chooseAlbumCandidates(songs, query, expectedArtists);
-  const collection = await loadMatchingAlbum(candidates, expectedAlbum?.trim() || query, albumEndpoint, signal, requester);
+  const collection = await loadMatchingAlbum(
+    candidates,
+    expectedAlbum?.trim() || query,
+    albumEndpoint,
+    signal,
+    requester,
+    expectedTracks,
+    expectedArtists,
+    expectedTrackCount,
+  );
   const resolved = collection?.length ? collection : [chooseSingleSong(songs, trackTitle, expectedAlbum, expectedArtists)];
   return { mode: resolved.length > 1 ? 'album' : 'single', songs: resolved, albumName: resolved[0].albumName, albumId: resolved[0].albumId };
 }

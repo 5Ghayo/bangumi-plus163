@@ -10,7 +10,9 @@ interface Options {
   query: string;
   expectedAlbum?: string;
   trackTitle?: string;
+  expectedTracks?: string[];
   expectedArtists?: string[];
+  expectedTrackCount?: number;
   autoFillAlbumOnFirstMatch?: boolean;
   mode?: NeteaseResolveMode;
   endpoint?: string;
@@ -24,7 +26,9 @@ export function useNeteaseTracks({
   query,
   expectedAlbum,
   trackTitle,
+  expectedTracks,
   expectedArtists,
+  expectedTrackCount,
   autoFillAlbumOnFirstMatch = false,
   mode = 'auto',
   endpoint,
@@ -39,7 +43,8 @@ export function useNeteaseTracks({
     error: string | null;
   }>({ key: '', result: null, error: null });
   const expectedArtistsKey = expectedArtists?.map((artist) => artist.trim()).filter(Boolean).join('|') ?? '';
-  const requestKey = `${cacheKey}|${enabled}|${endpoint ?? ''}|${albumEndpoint ?? ''}|${mode}|${query.trim()}|${expectedAlbum?.trim() ?? ''}|${trackTitle?.trim() ?? ''}|${expectedArtistsKey}|${autoFillAlbumOnFirstMatch}|${requestJson ? 'custom' : 'fetch'}`;
+  const expectedTracksKey = expectedTracks?.map((track) => track.trim()).filter(Boolean).join('|') ?? '';
+  const requestKey = `${cacheKey}|${enabled}|${endpoint ?? ''}|${albumEndpoint ?? ''}|${mode}|${query.trim()}|${expectedAlbum?.trim() ?? ''}|${trackTitle?.trim() ?? ''}|${expectedTracksKey}|${expectedArtistsKey}|${expectedTrackCount ?? 0}|${autoFillAlbumOnFirstMatch}|${requestJson ? 'custom' : 'fetch'}`;
 
   useEffect(() => {
     if (!enabled || !query.trim()) {
@@ -52,7 +57,9 @@ export function useNeteaseTracks({
       query: query.trim(),
       expectedAlbum,
       trackTitle,
+      expectedTracks,
       expectedArtists,
+      expectedTrackCount,
       autoFillAlbumOnFirstMatch,
       mode,
       endpoint,
@@ -72,7 +79,7 @@ export function useNeteaseTracks({
       });
 
     return () => controller.abort();
-  }, [albumEndpoint, autoFillAlbumOnFirstMatch, enabled, endpoint, expectedAlbum, expectedArtists, mode, query, requestJson, requestKey, trackTitle]);
+  }, [albumEndpoint, autoFillAlbumOnFirstMatch, enabled, endpoint, expectedAlbum, expectedArtists, expectedTrackCount, expectedTracks, mode, query, requestJson, requestKey, trackTitle]);
 
   const activeRequest = enabled && query.trim() ? requestKey : null;
   const isSettled = activeRequest !== null && settled.key === activeRequest;

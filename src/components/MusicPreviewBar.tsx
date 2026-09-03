@@ -5,6 +5,7 @@ import TrackPreviewControl, { type AudioPlayerState } from './TrackPreviewContro
 import { useNeteaseTracks } from '../hooks/useNeteaseTracks';
 import { findBangumiTrackRows, getBangumiArtistNames, getBangumiTrackTitle } from '../integration/bangumiPage';
 import { resolveNeteaseAudioUrl } from '../lib/neteaseResolver';
+import { SIMILAR_TITLE_THRESHOLD, cleanTrackTitle, textSimilarity } from '../lib/titleMatch';
 import type { JsonRequester } from '../lib/neteaseResolver';
 import type { BangumiSubject, NeteaseResolveMode, NeteaseSong } from '../types/bangumi';
 import trackControlStyles from '../styles/trackControl.css?inline';
@@ -15,6 +16,7 @@ interface Props {
   albumEndpoint: string;
   audioEndpoint: string;
   accountEndpoint: string;
+  localApiBase?: string;
   requestJson: JsonRequester;
   mode?: NeteaseResolveMode;
   sourceLabel?: string;
@@ -30,6 +32,28 @@ interface NeteaseAccountResponse {
       userId?: number;
     } | null;
   };
+}
+
+interface NeteaseQrKeyResponse {
+  data?: { unikey?: string };
+  unikey?: string;
+}
+
+interface NeteaseQrImageResponse {
+  data?: { qrimg?: string };
+  qrimg?: string;
+}
+
+interface NeteaseQrCheckResponse {
+  code?: number;
+  message?: string;
+  profile?: { nickname?: string } | null;
+}
+
+interface QrLoginState {
+  phase: 'loading' | 'waiting' | 'scanned' | 'success' | 'error';
+  qrimg?: string;
+  message?: string;
 }
 
 interface RowBinding {
@@ -64,6 +88,20 @@ const EMPTY_PLAYER: AudioPlayerState = {
 
 const VOLUME_STORAGE_KEY = 'bangumi-plus-music-volume';
 const ALBUM_AUTO_FILL_MIN_MATCHES = 3;
+
+async function requestLocalJson<T>(
+  baseUrl: string,
+  pathname: string,
+  signal?: AbortSignal,
+): Promise<T> {
+  const url = new URL(pathname, `${baseUrl.trim().replace(/\/$/, '')}/`);
+  const response = await fetch(url, { signal, headers: { Accept: 'application/json' } });
+  const data = await response.json() as T & { message?: string };
+  if (!response.ok) {
+    throw new Error(data.message || `本地 NCM API 请求失败（HTTP ${response.status}）`);
+  }
+  return data;
+}
 
 function readStoredVolume() {
   try {
@@ -103,25 +141,34 @@ function artistOverlapScore(song: NeteaseSong, expectedArtists: string[]) {
 }
 
 function matchSong(title: string, songs: NeteaseSong[], expectedArtists: string[] = []) {
-  const normalizedTitle = normalizeTrackTitle(title);
-  if (!normalizedTitle) return null;
+  const expectedTitle = cleanTrackTitle(title);
+  if (!expectedTitle) return null;
 
   const candidates = songs
     .map((song, index) => {
-      const name = normalizeTrackTitle(song.name);
-      const isExact = name === normalizedTitle;
-      const titleScore = isExact ? 1000
-        : name.includes(normalizedTitle) || normalizedTitle.includes(name) ? -Math.abs(name.length - normalizedTitle.length)
-          : -Infinity;
-      return { song, name, titleScore, artistScore: artistOverlapScore(song, expectedArtists), index };
+      const titleSimilarity = textSimilarity(expectedTitle, song.name);
+      return {
+        song,
+        titleSimilarity,
+        titleScore: titleSimilarity * 1000,
+        artistScore: artistOverlapScore(song, expectedArtists),
+        index,
+      };
     })
-    .filter(({ name: normalizedSongName }) => normalizedSongName.length > 2 && (normalizedSongName.includes(normalizedTitle) || normalizedTitle.includes(normalizedSongName)))
-    .sort((a, b) => a.index - b.index);
+    .filter(({ titleSimilarity }) => titleSimilarity >= SIMILAR_TITLE_THRESHOLD);
 
-  const exactCandidates = candidates.filter(({ titleScore }) => titleScore === 1000);
+  const exactCandidates = candidates.filter(({ titleSimilarity }) => titleSimilarity >= 0.999);
   const usableCandidates = exactCandidates.length > 0 ? exactCandidates : candidates;
   return [...usableCandidates]
-    .sort((a, b) => b.artistScore - a.artistScore)[0]?.song ?? null;
+    .sort((a, b) => b.titleScore - a.titleScore || b.artistScore - a.artistScore || a.index - b.index)
+    [0]?.song ?? null;
+}
+
+function getBangumiCleanTrackTitle(row: HTMLElement) {
+  return getBangumiTrackTitle(row)
+    .replace(/^\s*\d+\s*[.、:：)）-]?\s*/, '')
+    .replace(/\s*[／/].*$/, '')
+    .trim();
 }
 
 function matchRowsWithSongs(
@@ -133,7 +180,8 @@ function matchRowsWithSongs(
 ) {
   const usedSongIds = new Set<number>();
   const matches = rows.map((row) => {
-    const title = getBangumiTrackTitle(row).replace(/\s*[／/].*$/, '');
+    // Bangumi numbers tracks again within every disc, while a fetched album is continuous.
+    const title = getBangumiCleanTrackTitle(row);
     const availableSongs = songs.filter((song) => !usedSongIds.has(song.id));
     const song = matchSong(title, availableSongs, expectedArtists);
     if (song) usedSongIds.add(song.id);
@@ -155,6 +203,7 @@ export default function MusicPreviewBar({
   albumEndpoint,
   audioEndpoint,
   accountEndpoint,
+  localApiBase,
   requestJson,
   mode = 'auto',
   sourceLabel = '网易云音乐',
@@ -165,6 +214,8 @@ export default function MusicPreviewBar({
   const [player, setPlayer] = useState<AudioPlayerState>(EMPTY_PLAYER);
   const [volume, setVolume] = useState(readStoredVolume);
   const [accountStatus, setAccountStatus] = useState<'checking' | 'logged-in' | 'logged-out'>('checking');
+  const [qrLogin, setQrLogin] = useState<QrLoginState | null>(null);
+  const [qrLoginKey, setQrLoginKey] = useState('');
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const requestControllerRef = useRef<AbortController | null>(null);
   const currentSongIdRef = useRef<number | null>(null);
@@ -177,12 +228,17 @@ export default function MusicPreviewBar({
 
   const displayName = subject.name_cn || subject.name;
   const query = subject.name_cn && subject.name !== subject.name_cn ? `${subject.name_cn} ${subject.name}` : displayName;
-  const trackTitle = useMemo(() => {
-    if (!opened) return '';
-    return findBangumiTrackRows()
-      .map((row) => getBangumiTrackTitle(row).replace(/\s*[／/].*$/, ''))
-      .find(Boolean) ?? '';
+  const trackInfo = useMemo(() => {
+    if (!opened) return { titles: [] as string[], count: 0 };
+    const rows = findBangumiTrackRows();
+    return {
+      titles: rows.map((row) => getBangumiCleanTrackTitle(row)).filter(Boolean),
+      count: rows.length,
+    };
   }, [opened]);
+  const trackTitle = trackInfo.titles[0] ?? '';
+  const expectedTracks = trackInfo.titles;
+  const expectedTrackCount = trackInfo.count;
   const expectedArtists = useMemo(() => {
     if (!opened) return [];
     return getBangumiArtistNames();
@@ -191,7 +247,9 @@ export default function MusicPreviewBar({
     query,
     expectedAlbum: displayName,
     trackTitle,
+    expectedTracks,
     expectedArtists,
+    expectedTrackCount,
     mode,
     endpoint,
     albumEndpoint,
@@ -405,8 +463,118 @@ export default function MusicPreviewBar({
     if (loginWindow) loginWindow.opener = null;
   };
 
+  const closeQrLogin = () => {
+    setQrLoginKey('');
+    setQrLogin(null);
+  };
+
+  const startLocalQrLogin = async () => {
+    if (!localApiBase) return;
+    setQrLoginKey('');
+    setQrLogin({ phase: 'loading', message: '正在生成登录二维码...' });
+    try {
+      const keyResponse = await requestLocalJson<NeteaseQrKeyResponse>(localApiBase, 'login/qr/key');
+      const key = keyResponse.data?.unikey ?? keyResponse.unikey;
+      if (!key) throw new Error('无法创建网易云登录二维码');
+
+      const imageResponse = await requestLocalJson<NeteaseQrImageResponse>(
+        localApiBase,
+        `login/qr/create?key=${encodeURIComponent(key)}`,
+      );
+      const qrimg = imageResponse.data?.qrimg ?? imageResponse.qrimg;
+      if (!qrimg) throw new Error('无法加载网易云登录二维码');
+
+      setQrLoginKey(key);
+      setQrLogin({ phase: 'waiting', qrimg, message: '请使用网易云音乐 App 扫码' });
+    } catch (reason: unknown) {
+      setQrLogin({
+        phase: 'error',
+        message: reason instanceof Error ? reason.message : '网易云登录二维码加载失败',
+      });
+    }
+  };
+
+  const logoutLocalNcm = async () => {
+    if (!localApiBase) return;
+    try {
+      await requestLocalJson(localApiBase, 'logout', undefined);
+    } finally {
+      setAccountStatus('logged-out');
+    }
+  };
+
+  const handleLoginClick = () => {
+    if (accountStatus === 'logged-in') {
+      if (localApiBase) void logoutLocalNcm();
+      else openNeteaseLogin();
+      return;
+    }
+    if (localApiBase) {
+      void startLocalQrLogin();
+      return;
+    }
+    openNeteaseLogin();
+  };
+
+  useEffect(() => {
+    if (!localApiBase || !qrLoginKey) return;
+    if (qrLogin?.phase !== 'waiting' && qrLogin?.phase !== 'scanned') return;
+
+    const controller = new AbortController();
+    let stopped = false;
+
+    const poll = async () => {
+      try {
+        const response = await requestLocalJson<NeteaseQrCheckResponse>(
+          localApiBase,
+          `login/qr/check?key=${encodeURIComponent(qrLoginKey)}`,
+          controller.signal,
+        );
+        if (stopped) return;
+        const code = Number(response.code);
+        if (code === 803) {
+          setAccountStatus('logged-in');
+          setQrLogin({ phase: 'success', message: response.profile?.nickname ? `登录成功：${response.profile.nickname}` : '登录成功' });
+          setQrLoginKey('');
+          return;
+        }
+        if (code === 802) {
+          setQrLogin((current) => current?.qrimg
+            ? { phase: 'scanned', qrimg: current.qrimg, message: response.message ?? '已扫码，请在手机上确认' }
+            : current);
+          return;
+        }
+        if (code === 800) {
+          setQrLogin({ phase: 'error', message: response.message ?? '二维码已过期，请重新生成' });
+          setQrLoginKey('');
+          return;
+        }
+        setQrLogin((current) => current?.qrimg
+          ? { phase: 'waiting', qrimg: current.qrimg, message: response.message ?? '等待扫码' }
+          : current);
+      } catch (reason: unknown) {
+        if (controller.signal.aborted || stopped) return;
+        setQrLoginKey('');
+        setQrLogin({
+          phase: 'error',
+          message: reason instanceof Error ? reason.message : '网易云登录状态检查失败',
+        });
+      }
+    };
+
+    void poll();
+    const timer = window.setInterval(() => void poll(), 2000);
+    return () => {
+      stopped = true;
+      controller.abort();
+      window.clearInterval(timer);
+    };
+  }, [localApiBase, qrLogin, qrLoginKey]);
+
   const loginButtonLabel = accountStatus === 'logged-in' ? '已登录' : '登录';
-  const loginButtonTitle = accountStatus === 'logged-in' ? '网易云音乐账号已登录' : '登录网易云音乐账号';
+  const loginButtonTitle = accountStatus === 'logged-in'
+    ? (localApiBase ? '退出网易云音乐登录' : '网易云音乐账号已登录')
+    : '扫码登录网易云音乐账号';
 
   return (
     <section className={`music-preview${opened ? ' music-preview--open' : ''}`}>
@@ -417,7 +585,7 @@ export default function MusicPreviewBar({
             <span>{opened ? '收起试听' : '试听'}</span>
             <span className="music-preview__source">{sourceLabel}</span>
           </button>
-          <button className={`music-preview__login${accountStatus === 'logged-in' ? ' music-preview__login--active' : ''}`} type="button" onClick={openNeteaseLogin} title={loginButtonTitle} aria-label={loginButtonTitle}>
+          <button className={`music-preview__login${accountStatus === 'logged-in' ? ' music-preview__login--active' : ''}`} type="button" onClick={handleLoginClick} title={loginButtonTitle} aria-label={loginButtonTitle}>
             {accountStatus === 'checking' ? <LoaderCircle size={13} className="music-preview__spinner" aria-hidden="true" /> : accountStatus === 'logged-in' ? <Check size={13} aria-hidden="true" /> : <LogIn size={13} aria-hidden="true" />}
             <span>{loginButtonLabel}</span>
           </button>
@@ -453,6 +621,32 @@ export default function MusicPreviewBar({
       )}
       <audio ref={audioRef} preload="none" aria-hidden="true" style={{ display: 'none' }} />
       {rowBindings.map(({ host, song }) => createPortal(<TrackPreviewControl key={song.id} song={song} player={player} onToggle={toggleSong} onSeek={seek} />, host))}
+      {qrLogin && (
+        <div className="music-preview__qr-backdrop">
+          <div className="music-preview__qr-modal" role="dialog" aria-modal="true" aria-label="网易云音乐扫码登录">
+            <div className="music-preview__qr-header">
+              <span>网易云音乐登录</span>
+              <button className="music-preview__close" type="button" onClick={closeQrLogin} aria-label="关闭登录窗口" title="关闭登录窗口">
+                <X size={14} aria-hidden="true" />
+              </button>
+            </div>
+            {qrLogin.phase === 'loading' && (
+              <div className="music-preview__qr-loading">
+                <LoaderCircle size={18} className="music-preview__spinner" aria-hidden="true" />
+              </div>
+            )}
+            {(qrLogin.phase === 'waiting' || qrLogin.phase === 'scanned') && qrLogin.qrimg && (
+              <img className="music-preview__qr-image" src={qrLogin.qrimg} alt="网易云音乐登录二维码" />
+            )}
+            <p className="music-preview__qr-message">{qrLogin.message ?? '请使用网易云音乐 App 扫码'}</p>
+            {qrLogin.phase === 'error' && (
+              <button className="music-preview__qr-retry" type="button" onClick={() => void startLocalQrLogin()}>
+                重新生成
+              </button>
+            )}
+          </div>
+        </div>
+      )}
     </section>
   );
 }
